@@ -43,13 +43,7 @@ test("tui plugin registers goal slash commands", async () => {
   await plugin.tui(api as never, undefined, undefined as never)
 
   const commands = registered?.() ?? []
-  expect(commands.map((command) => command.value).sort()).toEqual([
-    "goal.clear",
-    "goal.pause",
-    "goal.resume",
-    "goal.set",
-    "goal.show",
-  ])
+  expect(commands.map((command) => command.value).sort()).toEqual(["goal.show"])
   expect(commands.flatMap((command) => (command.slash ? [command.slash.name] : [])).sort()).toEqual(["goal"])
   expect(typeof sidebar?.({}, { session_id: "session" })).not.toBe("string")
 })

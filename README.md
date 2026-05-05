@@ -119,7 +119,7 @@ OpenCode plugin modules are target-specific. This package exports separate modul
 {
   "exports": {
     "./server": "./dist/server.js",
-    "./tui": "./dist/tui.js"
+    "./tui": "./src/tui.tsx"
   }
 }
 ```
