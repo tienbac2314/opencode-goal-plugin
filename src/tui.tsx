@@ -137,6 +137,15 @@ function formatDuration(seconds: number) {
   return `${secs}s`
 }
 
+function formatDurationBadge(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (hours > 0) return `${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`
+  if (minutes > 0) return `${minutes}m`
+  return `${total}s`
+}
+
 function compactNumber(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
   if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`
@@ -168,16 +177,25 @@ function GoalSidebar(props: { api: TuiPluginApi; sessionID: string }) {
   return (
     <Show when={goal()}>
       {(value: () => GoalSnapshot) => (
-        <box>
-          <text fg={theme().text}>
-            <b>Goal</b>
+        <Show
+          when={value().status === "complete"}
+          fallback={
+            <box>
+              <text fg={theme().text}>
+                <b>Goal</b>
+              </text>
+              <text fg={theme().textMuted}>Status: {value().status}</text>
+              <text fg={theme().textMuted}>Time: {formatDuration(value().timeUsedSeconds)}</text>
+              <text fg={theme().textMuted}>Tokens: {tokens()}</text>
+              <text fg={theme().textMuted}>Remaining: {remaining()}</text>
+              <text fg={theme().textMuted}>{objective()}</text>
+            </box>
+          }
+        >
+          <text fg={theme().primary}>
+            <b>Goal achieved</b> ({formatDurationBadge(value().timeUsedSeconds)})
           </text>
-          <text fg={theme().textMuted}>Status: {value().status}</text>
-          <text fg={theme().textMuted}>Time: {formatDuration(value().timeUsedSeconds)}</text>
-          <text fg={theme().textMuted}>Tokens: {tokens()}</text>
-          <text fg={theme().textMuted}>Remaining: {remaining()}</text>
-          <text fg={theme().textMuted}>{objective()}</text>
-        </box>
+        </Show>
       )}
     </Show>
   )
