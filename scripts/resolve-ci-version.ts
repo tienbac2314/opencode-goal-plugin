@@ -27,20 +27,16 @@ function bumpPatch(version: string) {
 }
 
 async function latestPublishedVersion(name: string) {
-  const proc = Bun.spawn(["npm", "view", name, "version", "--silent"], {
-    stdout: "pipe",
-    stderr: "pipe",
+  const encoded = name.startsWith("@") ? `@${encodeURIComponent(name.slice(1))}` : encodeURIComponent(name)
+  const response = await fetch(`https://registry.npmjs.org/${encoded}`, {
+    signal: AbortSignal.timeout(30_000),
   })
-  const timeout = setTimeout(() => proc.kill(), 30_000)
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]).finally(() => clearTimeout(timeout))
-  if (code === null) throw new Error(`npm view timed out for ${name}`)
-  if (code === 0) return stdout.trim() || null
-  if (stderr.includes("E404") || stderr.includes("404 Not Found")) return null
-  throw new Error(stderr.trim() || `npm view failed with exit code ${code}`)
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(`npm registry lookup failed for ${name}: ${response.status} ${response.statusText}`)
+
+  const data = (await response.json()) as { "dist-tags"?: { latest?: unknown } }
+  const latest = data["dist-tags"]?.latest
+  return typeof latest === "string" ? latest : null
 }
 
 const packagePath = new URL("../package.json", import.meta.url)

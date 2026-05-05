@@ -1,17 +1,7 @@
 {
   "name": "@prevalentware/opencode-goal-plugin",
-  "version": "0.1.0",
-  "type": "module",
+  "version": "0.1.1",
   "description": "Codex-style long-running goal mode for OpenCode.",
-  "license": "MIT",
-  "author": "Prevalentware",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/prevalentWare/opencode-goal-plugin"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -19,11 +9,17 @@
     "agent",
     "tui"
   ],
-  "files": [
-    "dist",
-    "LICENSE",
-    "README.md"
-  ],
+  "homepage": "https://github.com/prevalentWare/opencode-goal-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/prevalentWare/opencode-goal-plugin/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prevalentWare/opencode-goal-plugin.git"
+  },
+  "license": "MIT",
+  "author": "Prevalentware",
+  "type": "module",
   "exports": {
     "./server": {
       "import": "./dist/server.js"
@@ -32,6 +28,11 @@
       "import": "./dist/tui.js"
     }
   },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "clean": "rm -rf dist",
     "build": "bun run clean && bun build ./src/server.ts ./src/tui.tsx --outdir ./dist --target bun --external @opencode-ai/plugin --external @opencode-ai/plugin/tui --external @opentui/core --external @opentui/solid --external solid-js --external zod",
@@ -41,9 +42,6 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run test && bun run build"
-  },
-  "engines": {
-    "opencode": ">=1.14.0"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.14.39",
@@ -58,5 +56,11 @@
     "eslint": "^10.3.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.2"
+  },
+  "engines": {
+    "opencode": ">=1.14.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
