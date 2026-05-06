@@ -41,10 +41,12 @@ type UpdateGoalArgs =
 const DEFAULT_MAX_AUTO_TURNS = 25
 const DEFAULT_CONTINUE_INTERVAL_SECONDS = 3
 const DEFAULT_COMMAND_NAME = "goal"
+const DEFAULT_TOKEN_BUDGET = 1_000_000
 
 function defaultTokenBudgetFromOptions(options?: Options) {
   const budget = options?.default_token_budget
-  if (budget == null) return null
+  if (budget === null) return null
+  if (budget === undefined) return DEFAULT_TOKEN_BUDGET
   return Number.isInteger(budget) && budget > 0 ? budget : null
 }
 

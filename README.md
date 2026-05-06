@@ -61,7 +61,7 @@ Server options can be configured in `opencode.json`:
         "auto_continue": true,
         "max_auto_turns": 25,
         "min_continue_interval_seconds": 3,
-        "default_token_budget": null
+        "default_token_budget": 1000000
       }
     ]
   ]
@@ -75,7 +75,7 @@ Defaults:
 - `min_continue_interval_seconds`: `3`
 - `register_command`: `true`
 - `command_name`: `"goal"`
-- `default_token_budget`: `null`
+- `default_token_budget`: `1000000`
 
 ## Goal Workflow
 
@@ -87,7 +87,7 @@ Use `/goal <objective>` in a fresh OpenCode chat to create a long-running goal:
 
 Bare `/goal` reports the current goal state. `/goal clear` clears the goal. The TUI also includes a `Goal` command-palette entry for viewing, refreshing, or clearing the current goal state without creating a new goal.
 
-By default, `/goal <objective>` omits `token_budget`, matching Codex TUI behavior. If you want every new slash-created goal to use a fixed token budget without prompting the user, set `default_token_budget` to a positive integer in `opencode.json`.
+By default, `/goal <objective>` creates the goal with `token_budget: 1000000`. To omit the budget, set `default_token_budget` to `null`. To use a different fixed budget without prompting the user, set `default_token_budget` to another positive integer in `opencode.json`.
 
 When writing the objective, include the scope, non-goals, and verification path when they matter. The agent is reminded to audit real files, command output, tests, or PR state before closing the goal.
 

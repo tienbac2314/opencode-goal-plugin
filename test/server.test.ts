@@ -77,7 +77,7 @@ test("server plugin registers goal as a desktop/web command by default", async (
   expect(config.command?.goal?.description).toBe("Set or view the long-running session goal")
   expect(config.command?.goal?.template).toContain('OpenCode goal mode command "/goal" was invoked')
   expect(config.command?.goal?.template).toContain("$ARGUMENTS")
-  expect(config.command?.goal?.template).toContain("By default, omit token_budget")
+  expect(config.command?.goal?.template).toContain("pass token_budget: 1000000")
 })
 
 test("server plugin can configure a default token budget for /goal commands", async () => {
@@ -98,6 +98,26 @@ test("server plugin can configure a default token budget for /goal commands", as
   await hooks.config?.(config as never)
 
   expect(config.command?.goal?.template).toContain("pass token_budget: 100000")
+})
+
+test("server plugin can omit token budget for /goal commands", async () => {
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async () => {},
+        },
+      },
+    } as never,
+    { auto_continue: false, default_token_budget: null },
+  )
+  const config = {} as {
+    command?: Record<string, { description?: string; template: string }>
+  }
+
+  await hooks.config?.(config as never)
+
+  expect(config.command?.goal?.template).toContain("By default, omit token_budget")
 })
 
 test("server plugin does not overwrite an existing goal command", async () => {
