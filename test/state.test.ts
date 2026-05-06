@@ -29,6 +29,7 @@ test("creates, reads, pauses, resumes, completes, and clears a goal", async () =
   const created = await createGoal("ses_1", "ship the plugin", 100)
   expect(created.status).toBe("active")
   expect(created.remainingTokens).toBe(100)
+  expect(created.sampledAt).toBeGreaterThanOrEqual(created.createdAt)
 
   await accountUsage("ses_1", 40)
   expect((await getGoal("ses_1"))?.tokensUsed).toBe(40)

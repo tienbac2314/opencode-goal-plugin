@@ -30,6 +30,7 @@ type State = {
 
 export type GoalSnapshot = Omit<Goal, "lastAccountedAt" | "autoTurns" | "lastContinuationAt"> & {
   remainingTokens: number | null
+  sampledAt: number
 }
 
 function defaultStateFile() {
@@ -115,8 +116,9 @@ function isClosed(status: GoalStatus) {
 }
 
 export function snapshot(goal: Goal): GoalSnapshot {
+  const sampledAt = nowSeconds()
   const activeSeconds =
-    goal.status === "active" && goal.lastAccountedAt != null ? Math.max(0, nowSeconds() - goal.lastAccountedAt) : 0
+    goal.status === "active" && goal.lastAccountedAt != null ? Math.max(0, sampledAt - goal.lastAccountedAt) : 0
   const timeUsedSeconds = goal.timeUsedSeconds + activeSeconds
   return {
     sessionID: goal.sessionID,
@@ -131,6 +133,7 @@ export function snapshot(goal: Goal): GoalSnapshot {
     blocker: goal.blocker ?? null,
     closedAt: goal.closedAt ?? null,
     remainingTokens: goal.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed),
+    sampledAt,
   }
 }
 

@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { createMemo, Show } from "solid-js"
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 
 type GoalSnapshot = {
   sessionID: string
@@ -15,15 +15,30 @@ type GoalSnapshot = {
   blocker?: string | null
   closedAt?: number | null
   remainingTokens: number | null
+  sampledAt?: number
 }
 
 type GoalToolPart = {
   type: string
+  text?: string
+  content?: string
   tool?: string
   state?: {
     status?: string
     output?: string
   }
+  tokens?: unknown
+}
+
+type SessionMessage = {
+  id: string
+  info?: unknown
+  tokens?: unknown
+}
+
+type GoalSessionState = {
+  goal: GoalSnapshot | null
+  messageIndex: number
 }
 
 function currentSessionID(api: TuiPluginApi) {
@@ -125,6 +140,10 @@ function compactNumber(value: number) {
   return String(value)
 }
 
+function nowSeconds() {
+  return Math.floor(Date.now() / 1000)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
@@ -143,6 +162,7 @@ function isGoalSnapshot(value: unknown): value is GoalSnapshot {
   if (value.blocker != null && typeof value.blocker !== "string") return false
   if (value.closedAt != null && typeof value.closedAt !== "number") return false
   if (value.remainingTokens !== null && typeof value.remainingTokens !== "number") return false
+  if (value.sampledAt != null && typeof value.sampledAt !== "number") return false
   return true
 }
 
@@ -163,16 +183,67 @@ function parseGoalToolOutput(part: GoalToolPart): GoalSnapshot | null | undefine
   }
 }
 
-function goalFromSession(api: TuiPluginApi, sessionID: string) {
-  const messages = [...api.state.session.messages(sessionID)].reverse()
-  for (const message of messages) {
+function goalStateFromSession(api: TuiPluginApi, sessionID: string): GoalSessionState {
+  const messages = [...api.state.session.messages(sessionID)] as SessionMessage[]
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex]
+    if (!message) continue
     const parts = [...api.state.part(message.id)].reverse() as GoalToolPart[]
     for (const part of parts) {
       const goal = parseGoalToolOutput(part)
-      if (goal !== undefined) return goal
+      if (goal !== undefined) return { goal, messageIndex }
     }
   }
-  return null
+  return { goal: null, messageIndex: -1 }
+}
+
+function goalFromSession(api: TuiPluginApi, sessionID: string) {
+  return goalStateFromSession(api, sessionID).goal
+}
+
+function tokensFromRecord(value: unknown): number | undefined {
+  if (!isRecord(value)) return undefined
+  if (typeof value.total === "number" && Number.isFinite(value.total)) return value.total
+  const cache = isRecord(value.cache) ? value.cache : {}
+  const fields = [value.input, value.output, value.reasoning, cache.read, cache.write]
+  if (!fields.some((field) => typeof field === "number" && Number.isFinite(field))) return undefined
+  return fields.reduce<number>((sum, field) => sum + (typeof field === "number" && Number.isFinite(field) ? field : 0), 0)
+}
+
+function textFromPart(part: GoalToolPart) {
+  if (part.type === "text" && typeof part.text === "string") return part.text
+  if (typeof part.content === "string") return part.content
+  return ""
+}
+
+function estimateTokensFromText(text: string) {
+  return Math.ceil(text.length / 4)
+}
+
+function estimatedTokensFromParts(parts: GoalToolPart[]) {
+  return parts.reduce<number>((sum, part) => sum + estimateTokensFromText(textFromPart(part)), 0)
+}
+
+function tokensFromMessage(api: TuiPluginApi, message: SessionMessage) {
+  const parts = [...api.state.part(message.id)] as GoalToolPart[]
+  const partTotal = parts.reduce<number>((sum, part) => sum + (tokensFromRecord(part.tokens) ?? 0), 0)
+  if (partTotal > 0) return partTotal
+  const infoTokens = isRecord(message.info) ? tokensFromRecord(message.info.tokens) : undefined
+  const exact = tokensFromRecord(message.tokens) ?? infoTokens
+  return exact && exact > 0 ? exact : estimatedTokensFromParts(parts)
+}
+
+function tokensSinceGoalSnapshot(api: TuiPluginApi, sessionID: string, messageIndex: number) {
+  if (messageIndex < 0) return 0
+  const messages = [...api.state.session.messages(sessionID)] as SessionMessage[]
+  return messages
+    .slice(messageIndex)
+    .reduce<number>((sum, message) => sum + tokensFromMessage(api, message), 0)
+}
+
+function liveTimeUsed(goal: GoalSnapshot, currentSeconds: number) {
+  if (goal.status !== "active" || goal.sampledAt == null) return goal.timeUsedSeconds
+  return goal.timeUsedSeconds + Math.max(0, currentSeconds - goal.sampledAt)
 }
 
 function formatGoal(goal: GoalSnapshot | null) {
@@ -192,20 +263,36 @@ function formatGoal(goal: GoalSnapshot | null) {
 
 function GoalSidebar(props: { api: TuiPluginApi; sessionID: string }) {
   const theme = () => props.api.theme.current
-  const goal = createMemo(() => {
+  const [currentSeconds, setCurrentSeconds] = createSignal(nowSeconds())
+  onMount(() => {
+    const interval = setInterval(() => setCurrentSeconds(nowSeconds()), 1000)
+    onCleanup(() => clearInterval(interval))
+  })
+  const state = createMemo(() => {
     props.api.state.session.messages(props.sessionID)
-    return goalFromSession(props.api, props.sessionID)
+    return goalStateFromSession(props.api, props.sessionID)
+  })
+  const goal = createMemo(() => state().goal)
+  const tokensUsed = createMemo(() => {
+    const value = state().goal
+    if (!value) return 0
+    return value.tokensUsed + tokensSinceGoalSnapshot(props.api, props.sessionID, state().messageIndex)
   })
   const tokens = createMemo(() => {
     const value = goal()
     if (!value) return ""
-    if (value.tokenBudget == null) return compactNumber(value.tokensUsed)
-    return `${compactNumber(value.tokensUsed)} / ${compactNumber(value.tokenBudget)}`
+    if (value.tokenBudget == null) return compactNumber(tokensUsed())
+    return `${compactNumber(tokensUsed())} / ${compactNumber(value.tokenBudget)}`
   })
   const remaining = createMemo(() => {
     const value = goal()
     if (!value) return ""
-    return value.remainingTokens == null ? "unbounded" : compactNumber(value.remainingTokens)
+    if (value.tokenBudget == null) return "unbounded"
+    return compactNumber(Math.max(0, value.tokenBudget - tokensUsed()))
+  })
+  const elapsed = createMemo(() => {
+    const value = goal()
+    return value ? liveTimeUsed(value, currentSeconds()) : 0
   })
   const objective = createMemo(() => {
     const value = goal()?.objective ?? ""
@@ -223,7 +310,7 @@ function GoalSidebar(props: { api: TuiPluginApi; sessionID: string }) {
                 <b>Goal</b>
               </text>
               <text fg={theme().textMuted}>Status: {value().status}</text>
-              <text fg={theme().textMuted}>Time: {formatDuration(value().timeUsedSeconds)}</text>
+              <text fg={theme().textMuted}>Time: {formatDuration(elapsed())}</text>
               <text fg={theme().textMuted}>Tokens: {tokens()}</text>
               <text fg={theme().textMuted}>Remaining: {remaining()}</text>
               <text fg={theme().textMuted}>{objective()}</text>
@@ -232,7 +319,7 @@ function GoalSidebar(props: { api: TuiPluginApi; sessionID: string }) {
         >
           <text fg={value().status === "complete" ? theme().primary : theme().textMuted}>
             <b>{value().status === "complete" ? "Goal achieved" : "Goal unmet"}</b> (
-            {formatDurationBadge(value().timeUsedSeconds)})
+            {formatDurationBadge(elapsed())})
           </text>
         </Show>
       )}
