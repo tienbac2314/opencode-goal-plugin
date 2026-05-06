@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Config, Plugin } from "@opencode-ai/plugin"
 import { z } from "zod"
 import {
   accountUsage,
@@ -16,6 +16,9 @@ type Options = {
   auto_continue?: boolean
   max_auto_turns?: number
   min_continue_interval_seconds?: number
+  register_command?: boolean
+  command_name?: string
+  default_token_budget?: number | null
 }
 
 type CreateGoalArgs = {
@@ -37,6 +40,54 @@ type UpdateGoalArgs =
 
 const DEFAULT_MAX_AUTO_TURNS = 25
 const DEFAULT_CONTINUE_INTERVAL_SECONDS = 3
+const DEFAULT_COMMAND_NAME = "goal"
+
+function defaultTokenBudgetFromOptions(options?: Options) {
+  const budget = options?.default_token_budget
+  if (budget == null) return null
+  return Number.isInteger(budget) && budget > 0 ? budget : null
+}
+
+function goalCommandTemplate(commandName: string, defaultTokenBudget: number | null) {
+  const defaultBudgetInstruction =
+    defaultTokenBudget == null
+      ? "By default, omit token_budget. This matches Codex TUI behavior for /goal <objective>."
+      : `By default, pass token_budget: ${defaultTokenBudget} when creating a goal unless the user explicitly requests a different token budget or no budget.`
+
+  return `OpenCode goal mode command "/${commandName}" was invoked.
+
+Arguments:
+<goal_command_arguments>
+$ARGUMENTS
+</goal_command_arguments>
+
+Use the goal tools to handle this command:
+
+- If the arguments are empty, call get_goal and briefly report the current goal state.
+- If the arguments are "status", "show", or "current", call get_goal and briefly report the current goal state.
+- If the arguments are "clear", call clear_goal and report whether a goal was cleared.
+- If the arguments start with "complete " or "done ", perform a completion audit against real artifacts and command output. Call update_goal with status "complete" only if the goal is achieved, using concise evidence from the audit.
+- If the arguments start with "unmet ", "blocked ", or "blocker ", call update_goal with status "unmet" only when the goal cannot be achieved or needs external input, using the remaining arguments as the blocker.
+- Otherwise, create a new goal with create_goal. Use the full arguments as the objective. ${defaultBudgetInstruction}
+- Set token_budget only from this default or when the arguments explicitly include a token budget such as "--budget 250000", "budget=250000", or "token_budget=250000".
+
+Create a goal only from these explicit command arguments. Do not infer a goal from unrelated session context. After create_goal succeeds, continue working toward the new goal.`
+}
+
+function commandNameFromOptions(options?: Options) {
+  const name = options?.command_name?.trim() || DEFAULT_COMMAND_NAME
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return DEFAULT_COMMAND_NAME
+  return name
+}
+
+function registerDesktopCommand(config: Config, commandName: string, defaultTokenBudget: number | null) {
+  config.command ??= {}
+  if (config.command[commandName]) return
+  config.command[commandName] = {
+    description: "Set or view the long-running session goal",
+    template: goalCommandTemplate(commandName, defaultTokenBudget),
+  }
+}
 
 function textFromPart(part: unknown): string {
   if (!part || typeof part !== "object") return ""
@@ -99,8 +150,15 @@ const server: Plugin = async ({ client }, options?: Options) => {
   const autoContinue = options?.auto_continue ?? true
   const maxAutoTurns = options?.max_auto_turns ?? DEFAULT_MAX_AUTO_TURNS
   const minInterval = options?.min_continue_interval_seconds ?? DEFAULT_CONTINUE_INTERVAL_SECONDS
+  const registerCommand = options?.register_command ?? true
+  const commandName = commandNameFromOptions(options)
+  const defaultTokenBudget = defaultTokenBudgetFromOptions(options)
 
   return {
+    async config(config) {
+      if (!registerCommand) return
+      registerDesktopCommand(config, commandName, defaultTokenBudget)
+    },
     tool: {
       get_goal: {
         description:

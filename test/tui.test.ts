@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import plugin from "../src/tui.tsx"
 
-test("tui plugin registers goal slash commands", async () => {
+test("tui plugin registers goal sidebar and status command without hijacking /goal", async () => {
   let registered: (() => { value: string; slash?: { name: string } }[]) | undefined
   let sidebar: ((ctx: unknown, props: { session_id: string }) => unknown) | undefined
   const api = {
@@ -44,6 +44,6 @@ test("tui plugin registers goal slash commands", async () => {
 
   const commands = registered?.() ?? []
   expect(commands.map((command) => command.value).sort()).toEqual(["goal.show"])
-  expect(commands.flatMap((command) => (command.slash ? [command.slash.name] : [])).sort()).toEqual(["goal"])
+  expect(commands.flatMap((command) => (command.slash ? [command.slash.name] : [])).sort()).toEqual([])
   expect(typeof sidebar?.({}, { session_id: "session" })).not.toBe("string")
 })

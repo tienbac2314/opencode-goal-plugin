@@ -57,6 +57,95 @@ test("server plugin exposes Codex-style goal tools", async () => {
   expect(calls).toHaveLength(0)
 })
 
+test("server plugin registers goal as a desktop/web command by default", async () => {
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async () => {},
+        },
+      },
+    } as never,
+    { auto_continue: false },
+  )
+  const config = {} as {
+    command?: Record<string, { description?: string; template: string }>
+  }
+
+  await hooks.config?.(config as never)
+
+  expect(config.command?.goal?.description).toBe("Set or view the long-running session goal")
+  expect(config.command?.goal?.template).toContain('OpenCode goal mode command "/goal" was invoked')
+  expect(config.command?.goal?.template).toContain("$ARGUMENTS")
+  expect(config.command?.goal?.template).toContain("By default, omit token_budget")
+})
+
+test("server plugin can configure a default token budget for /goal commands", async () => {
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async () => {},
+        },
+      },
+    } as never,
+    { auto_continue: false, default_token_budget: 100_000 },
+  )
+  const config = {} as {
+    command?: Record<string, { description?: string; template: string }>
+  }
+
+  await hooks.config?.(config as never)
+
+  expect(config.command?.goal?.template).toContain("pass token_budget: 100000")
+})
+
+test("server plugin does not overwrite an existing goal command", async () => {
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async () => {},
+        },
+      },
+    } as never,
+    { auto_continue: false },
+  )
+  const config = {
+    command: {
+      goal: {
+        description: "custom",
+        template: "custom template",
+      },
+    },
+  }
+
+  await hooks.config?.(config as never)
+
+  expect(config.command.goal.description).toBe("custom")
+  expect(config.command.goal.template).toBe("custom template")
+})
+
+test("server plugin can disable desktop/web command registration", async () => {
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async () => {},
+        },
+      },
+    } as never,
+    { auto_continue: false, register_command: false },
+  )
+  const config = {} as {
+    command?: Record<string, { description?: string; template: string }>
+  }
+
+  await hooks.config?.(config as never)
+
+  expect(config.command).toBeUndefined()
+})
+
 test("update goal can close as unmet with a blocker", async () => {
   const hooks = await plugin.server(
     {

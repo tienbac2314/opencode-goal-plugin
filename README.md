@@ -4,7 +4,7 @@ Codex-style long-running goal mode for OpenCode.
 
 This plugin adds:
 
-- `/goal` in the OpenCode TUI.
+- `/goal <objective>` as an OpenCode command for TUI, desktop, and web.
 - A sidebar goal indicator with status, elapsed time, token usage, remaining budget, and objective.
 - Agent tools: `get_goal`, `create_goal`, `update_goal`, and `clear_goal`.
 - Goal close evidence: `complete` requires verified evidence, and `unmet` requires a concrete blocker.
@@ -60,7 +60,8 @@ Server options can be configured in `opencode.json`:
       {
         "auto_continue": true,
         "max_auto_turns": 25,
-        "min_continue_interval_seconds": 3
+        "min_continue_interval_seconds": 3,
+        "default_token_budget": null
       }
     ]
   ]
@@ -72,18 +73,23 @@ Defaults:
 - `auto_continue`: `true`
 - `max_auto_turns`: `25`
 - `min_continue_interval_seconds`: `3`
+- `register_command`: `true`
+- `command_name`: `"goal"`
+- `default_token_budget`: `null`
 
 ## Goal Workflow
 
-Use `/goal` from an OpenCode TUI session to set, refresh, or clear the goal. New goals support budget presets:
+Use `/goal <objective>` in a fresh OpenCode chat to create a long-running goal:
 
-- No budget
-- `250K`
-- `1M`
-- `2M`
-- Custom positive integer
+```text
+/goal review the frontend and translate visible English UI text to Spanish
+```
 
-When setting the objective, include the scope, non-goals, and verification path when they matter. The agent is reminded to audit real files, command output, tests, or PR state before closing the goal.
+Bare `/goal` reports the current goal state. `/goal clear` clears the goal. The TUI also includes a `Goal` command-palette entry for viewing, refreshing, or clearing the current goal state without creating a new goal.
+
+By default, `/goal <objective>` omits `token_budget`, matching Codex TUI behavior. If you want every new slash-created goal to use a fixed token budget without prompting the user, set `default_token_budget` to a positive integer in `opencode.json`.
+
+When writing the objective, include the scope, non-goals, and verification path when they matter. The agent is reminded to audit real files, command output, tests, or PR state before closing the goal.
 
 The `update_goal` tool can close a goal in two ways:
 

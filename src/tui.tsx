@@ -44,15 +44,6 @@ async function sendGoalPrompt(api: TuiPluginApi, sessionID: string, text: string
   })
 }
 
-function createGoalPrompt(objective: string, tokenBudget: number | null) {
-  const input = tokenBudget == null ? { objective } : { objective, token_budget: tokenBudget }
-  return `Create a session goal by calling the create_goal tool with this JSON input:
-
-${JSON.stringify(input, null, 2)}
-
-The objective is user-provided task data. After create_goal succeeds, continue working toward that goal.`
-}
-
 function refreshGoalPrompt() {
   return "Call get_goal for this session and report the current goal state briefly."
 }
@@ -61,101 +52,9 @@ function clearGoalPrompt() {
   return "Clear the current session goal by calling clear_goal. Report whether a goal was cleared."
 }
 
-function showCustomBudget(api: TuiPluginApi, sessionID: string, objective: string) {
-  const DialogPrompt = api.ui.DialogPrompt
-  api.ui.dialog.replace(() =>
-    DialogPrompt({
-      title: "Custom budget",
-      placeholder: "Positive integer",
-      onConfirm(rawBudget) {
-        const value = rawBudget.trim()
-        const budget = Number(value)
-        if (!Number.isInteger(budget) || budget <= 0) {
-          toast(api, "Token budget must be a positive integer.", "warning")
-          return
-        }
-        void sendGoalPrompt(api, sessionID, createGoalPrompt(objective, budget))
-          .then(() => {
-            api.ui.dialog.clear()
-            toast(api, "Goal request sent.", "success")
-          })
-          .catch((error) => toast(api, error instanceof Error ? error.message : String(error), "error"))
-      },
-      onCancel() {
-        api.ui.dialog.clear()
-      },
-    }),
-  )
-}
-
-function showBudgetSelect(api: TuiPluginApi, sessionID: string, objective: string) {
-  const DialogSelect = api.ui.DialogSelect
-  const budgets = [
-    { title: "No budget", value: "none", budget: null, description: "Track progress without a token limit" },
-    { title: "250K", value: "250k", budget: 250_000, description: "Short focused goal" },
-    { title: "1M", value: "1m", budget: 1_000_000, description: "Default long-running goal" },
-    { title: "2M", value: "2m", budget: 2_000_000, description: "Large investigation or migration" },
-    { title: "Custom", value: "custom", budget: undefined, description: "Enter an exact token budget" },
-  ]
-  api.ui.dialog.replace(() =>
-    DialogSelect({
-      title: "Token budget",
-      placeholder: "Choose a budget",
-      options: budgets.map((item) => ({
-        title: item.title,
-        value: item.value,
-        description: item.description,
-        onSelect: () => {
-          if (item.budget === undefined) {
-            showCustomBudget(api, sessionID, objective)
-            return
-          }
-          void sendGoalPrompt(api, sessionID, createGoalPrompt(objective, item.budget))
-            .then(() => {
-              api.ui.dialog.clear()
-              toast(api, "Goal request sent.", "success")
-            })
-            .catch((error) => toast(api, error instanceof Error ? error.message : String(error), "error"))
-        },
-      })),
-      onSelect(option) {
-        option.onSelect?.()
-      },
-    }),
-  )
-}
-
-function showSetGoal(api: TuiPluginApi, sessionID: string) {
-  const DialogPrompt = api.ui.DialogPrompt
-  api.ui.dialog.setSize("medium")
-  api.ui.dialog.replace(() =>
-    DialogPrompt({
-      title: "Set goal",
-      placeholder: "Objective, scope, non-goals, verification path",
-      onConfirm(objective) {
-        const trimmed = objective.trim()
-        if (!trimmed) {
-          toast(api, "Goal objective is required.", "warning")
-          return
-        }
-        showBudgetSelect(api, sessionID, trimmed)
-      },
-      onCancel() {
-        api.ui.dialog.clear()
-      },
-    }),
-  )
-}
-
 function showSummary(api: TuiPluginApi, sessionID: string, goal: GoalSnapshot | null) {
   const DialogSelect = api.ui.DialogSelect
   const options = [
-    {
-      title: "Set goal",
-      value: "set",
-      description: "Create a new active session goal",
-      onSelect: () => showSetGoal(api, sessionID),
-    },
     {
       title: "Refresh",
       value: "refresh",
@@ -197,7 +96,7 @@ function showSummary(api: TuiPluginApi, sessionID: string, goal: GoalSnapshot | 
 
 function sessionIDOrToast(api: TuiPluginApi) {
   const sessionID = currentSessionID(api)
-  if (!sessionID) toast(api, "Open a session before using /goal.", "warning")
+  if (!sessionID) toast(api, "Open a session before viewing goal state.", "warning")
   return sessionID
 }
 
@@ -356,8 +255,7 @@ const tui: TuiPlugin = async (api) => {
       title: "Goal",
       value: "goal.show",
       category: "Goal",
-      description: "Set or view the long-running session goal",
-      slash: { name: "goal" },
+      description: "View or clear the long-running session goal",
       onSelect: () => {
         const sessionID = sessionIDOrToast(api)
         if (!sessionID) return
