@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { readFileSync } from "node:fs"
 
 export type GoalStatus = "active" | "paused" | "budgetLimited" | "complete" | "unmet"
-export type MutableGoalStatus = "active" | "paused" | "budgetLimited"
+export type MutableGoalStatus = "active" | "paused"
 
 export type Goal = {
   sessionID: string
@@ -96,14 +96,6 @@ export function validateObjective(objective: string) {
   return value
 }
 
-export function validateBudget(tokenBudget: number | null | undefined) {
-  if (tokenBudget == null) return null
-  if (!Number.isInteger(tokenBudget) || tokenBudget <= 0) {
-    throw new Error("token budget must be a positive integer")
-  }
-  return tokenBudget
-}
-
 export function validateEvidence(evidence: string | null | undefined, label: string) {
   const value = evidence?.trim()
   if (!value) throw new Error(`${label} must not be empty`)
@@ -115,16 +107,21 @@ function isClosed(status: GoalStatus) {
   return status === "complete" || status === "unmet"
 }
 
+function visibleStatus(status: GoalStatus): GoalStatus {
+  return status === "budgetLimited" ? "active" : status
+}
+
 export function snapshot(goal: Goal): GoalSnapshot {
   const sampledAt = nowSeconds()
+  const status = visibleStatus(goal.status)
   const activeSeconds =
-    goal.status === "active" && goal.lastAccountedAt != null ? Math.max(0, sampledAt - goal.lastAccountedAt) : 0
+    status === "active" && goal.lastAccountedAt != null ? Math.max(0, sampledAt - goal.lastAccountedAt) : 0
   const timeUsedSeconds = goal.timeUsedSeconds + activeSeconds
   return {
     sessionID: goal.sessionID,
     objective: goal.objective,
-    status: goal.status,
-    tokenBudget: goal.tokenBudget,
+    status,
+    tokenBudget: null,
     tokensUsed: goal.tokensUsed,
     timeUsedSeconds,
     createdAt: goal.createdAt,
@@ -132,7 +129,7 @@ export function snapshot(goal: Goal): GoalSnapshot {
     completionEvidence: goal.completionEvidence ?? null,
     blocker: goal.blocker ?? null,
     closedAt: goal.closedAt ?? null,
-    remainingTokens: goal.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed),
+    remainingTokens: null,
     sampledAt,
   }
 }
@@ -149,9 +146,8 @@ export function getGoalSync(sessionID: string) {
   return goal ? snapshot(goal) : null
 }
 
-export async function createGoal(sessionID: string, objective: string, tokenBudget?: number | null) {
+export async function createGoal(sessionID: string, objective: string, _tokenBudget?: number | null) {
   const value = validateObjective(objective)
-  const budget = validateBudget(tokenBudget)
   return mutate((state) => {
     const existing = state.goals[sessionID]
     if (existing && !isClosed(existing.status)) {
@@ -162,7 +158,7 @@ export async function createGoal(sessionID: string, objective: string, tokenBudg
       sessionID,
       objective: value,
       status: "active",
-      tokenBudget: budget,
+      tokenBudget: null,
       tokensUsed: 0,
       timeUsedSeconds: 0,
       createdAt: now,
@@ -243,13 +239,14 @@ export async function accountUsage(sessionID: string, tokensUsed?: number) {
   return mutate((state) => {
     const goal = state.goals[sessionID]
     if (!goal) return null
+    if (goal.status === "budgetLimited") {
+      goal.status = "active"
+      goal.tokenBudget = null
+      goal.lastAccountedAt = nowSeconds()
+    }
     accountWallClock(goal)
     if (typeof tokensUsed === "number" && Number.isFinite(tokensUsed)) {
       goal.tokensUsed = Math.max(goal.tokensUsed, Math.max(0, Math.ceil(tokensUsed)))
-    }
-    if (goal.status === "active" && goal.tokenBudget != null && goal.tokensUsed >= goal.tokenBudget) {
-      goal.status = "budgetLimited"
-      goal.lastAccountedAt = null
     }
     goal.updatedAt = nowSeconds()
     return snapshot(goal)
@@ -259,13 +256,14 @@ export async function accountUsage(sessionID: string, tokensUsed?: number) {
 export async function reserveContinuation(sessionID: string, maxAutoTurns: number, minIntervalSeconds: number) {
   return mutate((state) => {
     const goal = state.goals[sessionID]
-    if (!goal || goal.status !== "active") return null
+    if (!goal || (goal.status !== "active" && goal.status !== "budgetLimited")) return null
     const now = nowSeconds()
-    if (goal.autoTurns >= maxAutoTurns) {
-      goal.status = "budgetLimited"
-      goal.updatedAt = now
-      return null
+    if (goal.status === "budgetLimited") {
+      goal.status = "active"
+      goal.tokenBudget = null
+      goal.lastAccountedAt = now
     }
+    if (goal.autoTurns >= maxAutoTurns) return null
     if (goal.lastContinuationAt && now - goal.lastContinuationAt < minIntervalSeconds) return null
     accountWallClock(goal, now)
     goal.autoTurns += 1
@@ -291,12 +289,9 @@ export function estimateTokensFromText(text: string) {
 
 export function formatGoal(goal: GoalSnapshot | null) {
   if (!goal) return "No goal is set for this session."
-  const budget = goal.tokenBudget == null ? "none" : `${goal.tokensUsed} / ${goal.tokenBudget}`
   const lines = [
     `Objective: ${goal.objective}`,
     `Status: ${goal.status}`,
-    `Tokens: ${budget}`,
-    `Remaining tokens: ${goal.remainingTokens ?? "n/a"}`,
     `Time used: ${goal.timeUsedSeconds}s`,
   ]
   if (goal.completionEvidence) lines.push(`Completion evidence: ${goal.completionEvidence}`)

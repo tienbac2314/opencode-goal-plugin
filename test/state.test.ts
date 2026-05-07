@@ -28,7 +28,8 @@ afterEach(async () => {
 test("creates, reads, pauses, resumes, completes, and clears a goal", async () => {
   const created = await createGoal("ses_1", "ship the plugin", 100)
   expect(created.status).toBe("active")
-  expect(created.remainingTokens).toBe(100)
+  expect(created.tokenBudget).toBeNull()
+  expect(created.remainingTokens).toBeNull()
   expect(created.sampledAt).toBeGreaterThanOrEqual(created.createdAt)
 
   await accountUsage("ses_1", 40)
@@ -61,16 +62,17 @@ test("requires evidence when closing goals", async () => {
   await expect(markGoalUnmet("ses_1", "")).rejects.toThrow("blocker must not be empty")
 })
 
-test("marks budget-limited when estimated usage crosses the budget", async () => {
-  await createGoal("ses_1", "stay inside budget", 10)
+test("token usage is informational and does not limit goals", async () => {
+  await createGoal("ses_1", "stay active", 10)
   const updated = await accountUsage("ses_1", 12)
-  expect(updated?.status).toBe("budgetLimited")
-  expect(updated?.remainingTokens).toBe(0)
+  expect(updated?.status).toBe("active")
+  expect(updated?.remainingTokens).toBeNull()
+  expect(updated?.tokensUsed).toBe(12)
 })
 
 test("reserves continuation until max auto turns is reached", async () => {
   await createGoal("ses_1", "continue", null)
   expect(await reserveContinuation("ses_1", 1, 0)).not.toBeNull()
   expect(await reserveContinuation("ses_1", 1, 0)).toBeNull()
-  expect((await getGoal("ses_1"))?.status).toBe("budgetLimited")
+  expect((await getGoal("ses_1"))?.status).toBe("active")
 })

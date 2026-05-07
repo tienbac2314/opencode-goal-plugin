@@ -42,8 +42,9 @@ test("server plugin exposes Codex-style goal tools", async () => {
   expect(Object.keys(tools).sort()).toEqual(["clear_goal", "create_goal", "get_goal", "update_goal"])
 
   const context = { sessionID: "ses_1" } as never
-  const created = await requireTool(tools.create_goal, "create_goal").execute({ objective: "finish", token_budget: 50 }, context)
+  const created = await requireTool(tools.create_goal, "create_goal").execute({ objective: "finish" }, context)
   expect(String(created)).toContain('"status": "active"')
+  expect(String(created)).toContain('"tokenBudget": null')
 
   const read = await requireTool(tools.get_goal, "get_goal").execute({}, context)
   expect(String(read)).toContain('"objective": "finish"')
@@ -52,7 +53,7 @@ test("server plugin exposes Codex-style goal tools", async () => {
     { status: "complete", evidence: "verified locally" },
     context,
   )
-  expect(String(completed)).toContain('"completion_budget_report"')
+  expect(String(completed)).toContain('"completion_report"')
   expect(String(completed)).toContain('"completionEvidence": "verified locally"')
   expect(calls).toHaveLength(0)
 })
@@ -77,47 +78,7 @@ test("server plugin registers goal as a desktop/web command by default", async (
   expect(config.command?.goal?.description).toBe("Set or view the long-running session goal")
   expect(config.command?.goal?.template).toContain('OpenCode goal mode command "/goal" was invoked')
   expect(config.command?.goal?.template).toContain("$ARGUMENTS")
-  expect(config.command?.goal?.template).toContain("pass token_budget: 1000000")
-})
-
-test("server plugin can configure a default token budget for /goal commands", async () => {
-  const hooks = await plugin.server(
-    {
-      client: {
-        session: {
-          promptAsync: async () => {},
-        },
-      },
-    } as never,
-    { auto_continue: false, default_token_budget: 100_000 },
-  )
-  const config = {} as {
-    command?: Record<string, { description?: string; template: string }>
-  }
-
-  await hooks.config?.(config as never)
-
-  expect(config.command?.goal?.template).toContain("pass token_budget: 100000")
-})
-
-test("server plugin can omit token budget for /goal commands", async () => {
-  const hooks = await plugin.server(
-    {
-      client: {
-        session: {
-          promptAsync: async () => {},
-        },
-      },
-    } as never,
-    { auto_continue: false, default_token_budget: null },
-  )
-  const config = {} as {
-    command?: Record<string, { description?: string; template: string }>
-  }
-
-  await hooks.config?.(config as never)
-
-  expect(config.command?.goal?.template).toContain("By default, omit token_budget")
+  expect(config.command?.goal?.template).not.toContain("token_budget")
 })
 
 test("server plugin does not overwrite an existing goal command", async () => {
@@ -207,7 +168,7 @@ test("message transform prefers exact step token usage", async () => {
   if (!tools) throw new Error("expected goal tools to be registered")
 
   const context = { sessionID: "ses_1" } as never
-  await requireTool(tools.create_goal, "create_goal").execute({ objective: "finish", token_budget: 100 }, context)
+  await requireTool(tools.create_goal, "create_goal").execute({ objective: "finish" }, context)
   await hooks["experimental.chat.messages.transform"]!(
     {},
     {

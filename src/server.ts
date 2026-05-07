@@ -18,12 +18,10 @@ type Options = {
   min_continue_interval_seconds?: number
   register_command?: boolean
   command_name?: string
-  default_token_budget?: number | null
 }
 
 type CreateGoalArgs = {
   objective: string
-  token_budget?: number
 }
 
 type UpdateGoalArgs =
@@ -41,21 +39,8 @@ type UpdateGoalArgs =
 const DEFAULT_MAX_AUTO_TURNS = 25
 const DEFAULT_CONTINUE_INTERVAL_SECONDS = 3
 const DEFAULT_COMMAND_NAME = "goal"
-const DEFAULT_TOKEN_BUDGET = 1_000_000
 
-function defaultTokenBudgetFromOptions(options?: Options) {
-  const budget = options?.default_token_budget
-  if (budget === null) return null
-  if (budget === undefined) return DEFAULT_TOKEN_BUDGET
-  return Number.isInteger(budget) && budget > 0 ? budget : null
-}
-
-function goalCommandTemplate(commandName: string, defaultTokenBudget: number | null) {
-  const defaultBudgetInstruction =
-    defaultTokenBudget == null
-      ? "By default, omit token_budget. This matches Codex TUI behavior for /goal <objective>."
-      : `By default, pass token_budget: ${defaultTokenBudget} when creating a goal unless the user explicitly requests a different token budget or no budget.`
-
+function goalCommandTemplate(commandName: string) {
   return `OpenCode goal mode command "/${commandName}" was invoked.
 
 Arguments:
@@ -70,8 +55,7 @@ Use the goal tools to handle this command:
 - If the arguments are "clear", call clear_goal and report whether a goal was cleared.
 - If the arguments start with "complete " or "done ", perform a completion audit against real artifacts and command output. Call update_goal with status "complete" only if the goal is achieved, using concise evidence from the audit.
 - If the arguments start with "unmet ", "blocked ", or "blocker ", call update_goal with status "unmet" only when the goal cannot be achieved or needs external input, using the remaining arguments as the blocker.
-- Otherwise, create a new goal with create_goal. Use the full arguments as the objective. ${defaultBudgetInstruction}
-- Set token_budget only from this default or when the arguments explicitly include a token budget such as "--budget 250000", "budget=250000", or "token_budget=250000".
+- Otherwise, create a new goal with create_goal. Use the full arguments as the objective.
 
 Create a goal only from these explicit command arguments. Do not infer a goal from unrelated session context. After create_goal succeeds, continue working toward the new goal.`
 }
@@ -82,12 +66,12 @@ function commandNameFromOptions(options?: Options) {
   return name
 }
 
-function registerDesktopCommand(config: Config, commandName: string, defaultTokenBudget: number | null) {
+function registerDesktopCommand(config: Config, commandName: string) {
   config.command ??= {}
   if (config.command[commandName]) return
   config.command[commandName] = {
     description: "Set or view the long-running session goal",
-    template: goalCommandTemplate(commandName, defaultTokenBudget),
+    template: goalCommandTemplate(commandName),
   }
 }
 
@@ -154,17 +138,16 @@ const server: Plugin = async ({ client }, options?: Options) => {
   const minInterval = options?.min_continue_interval_seconds ?? DEFAULT_CONTINUE_INTERVAL_SECONDS
   const registerCommand = options?.register_command ?? true
   const commandName = commandNameFromOptions(options)
-  const defaultTokenBudget = defaultTokenBudgetFromOptions(options)
 
   return {
     async config(config) {
       if (!registerCommand) return
-      registerDesktopCommand(config, commandName, defaultTokenBudget)
+      registerDesktopCommand(config, commandName)
     },
     tool: {
       get_goal: {
         description:
-          "Get the current goal for this OpenCode session, including status, budgets, estimated token usage, elapsed-time usage, and remaining token budget.",
+          "Get the current goal for this OpenCode session, including status, observed token usage, and elapsed-time usage.",
         args: {},
         async execute(_args, context) {
           return JSON.stringify({ goal: await getGoal(context.sessionID) }, null, 2)
@@ -172,20 +155,19 @@ const server: Plugin = async ({ client }, options?: Options) => {
       },
       create_goal: {
         description:
-          "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks. Set token_budget only when an explicit token budget is requested. Fails if a non-complete goal exists.",
+          "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks. Fails if a non-complete goal exists.",
         args: {
           objective: z.string().min(1).max(4000).describe("The concrete objective to start pursuing."),
-          token_budget: z.number().int().positive().optional().describe("Optional positive token budget for the goal."),
         },
         async execute(args, context) {
           const input = args as CreateGoalArgs
-          const goal = await createGoal(context.sessionID, input.objective, input.token_budget)
-          return JSON.stringify({ goal, remaining_tokens: goal.remainingTokens }, null, 2)
+          const goal = await createGoal(context.sessionID, input.objective)
+          return JSON.stringify({ goal }, null, 2)
         },
       },
       update_goal: {
         description:
-          "Close the existing goal only after an audit against real evidence. Use status complete only when the objective is achieved and no required work remains, and include evidence. Use status unmet only when the objective cannot be achieved or is blocked, and include the blocker. Do not close a goal merely because the budget is exhausted or because work is stopping.",
+          "Close the existing goal only after an audit against real evidence. Use status complete only when the objective is achieved and no required work remains, and include evidence. Use status unmet only when the objective cannot be achieved or is blocked, and include the blocker. Do not close a goal merely because work is stopping.",
         args: {
           status: z.enum(["complete", "unmet"]).describe("Required. complete means achieved; unmet means blocked or impossible."),
           evidence: z
@@ -205,22 +187,12 @@ const server: Plugin = async ({ client }, options?: Options) => {
           const input = args as UpdateGoalArgs
           if (input.status === "complete") {
             const goal = await completeGoal(context.sessionID, input.evidence ?? "")
-            const report =
-              goal.tokenBudget == null
-                ? `Goal achieved. Time used: ${goal.timeUsedSeconds} seconds. Evidence: ${goal.completionEvidence}.`
-                : `Goal achieved. Tokens used: ${goal.tokensUsed} of ${goal.tokenBudget}; time used: ${goal.timeUsedSeconds} seconds. Evidence: ${goal.completionEvidence}.`
-            return JSON.stringify(
-              { goal, remaining_tokens: goal.remainingTokens, completion_budget_report: report },
-              null,
-              2,
-            )
+            const report = `Goal achieved. Time used: ${goal.timeUsedSeconds} seconds. Evidence: ${goal.completionEvidence}.`
+            return JSON.stringify({ goal, completion_report: report }, null, 2)
           }
           const goal = await markGoalUnmet(context.sessionID, input.blocker ?? "")
-          const report =
-            goal.tokenBudget == null
-              ? `Goal unmet. Time used: ${goal.timeUsedSeconds} seconds. Blocker: ${goal.blocker}.`
-              : `Goal unmet. Tokens used: ${goal.tokensUsed} of ${goal.tokenBudget}; time used: ${goal.timeUsedSeconds} seconds. Blocker: ${goal.blocker}.`
-          return JSON.stringify({ goal, remaining_tokens: goal.remainingTokens, unmet_report: report }, null, 2)
+          const report = `Goal unmet. Time used: ${goal.timeUsedSeconds} seconds. Blocker: ${goal.blocker}.`
+          return JSON.stringify({ goal, unmet_report: report }, null, 2)
         },
       },
       clear_goal: {

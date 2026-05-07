@@ -5,7 +5,7 @@ Codex-style long-running goal mode for OpenCode.
 This plugin adds:
 
 - `/goal <objective>` as an OpenCode command for TUI, desktop, and web.
-- A sidebar goal indicator with status, elapsed time, token usage, remaining budget, and objective.
+- A sidebar goal indicator with status, elapsed time, and objective.
 - Agent tools: `get_goal`, `create_goal`, `update_goal`, and `clear_goal`.
 - Goal close evidence: `complete` requires verified evidence, and `unmet` requires a concrete blocker.
 - Persistent per-session goal state.
@@ -60,8 +60,7 @@ Server options can be configured in `opencode.json`:
       {
         "auto_continue": true,
         "max_auto_turns": 25,
-        "min_continue_interval_seconds": 3,
-        "default_token_budget": 1000000
+        "min_continue_interval_seconds": 3
       }
     ]
   ]
@@ -75,7 +74,6 @@ Defaults:
 - `min_continue_interval_seconds`: `3`
 - `register_command`: `true`
 - `command_name`: `"goal"`
-- `default_token_budget`: `1000000`
 
 ## Goal Workflow
 
@@ -87,16 +85,12 @@ Use `/goal <objective>` in a fresh OpenCode chat to create a long-running goal:
 
 Bare `/goal` reports the current goal state. `/goal clear` clears the goal. The TUI also includes a `Goal` command-palette entry for viewing, refreshing, or clearing the current goal state without creating a new goal.
 
-By default, `/goal <objective>` creates the goal with `token_budget: 1000000`. To omit the budget, set `default_token_budget` to `null`. To use a different fixed budget without prompting the user, set `default_token_budget` to another positive integer in `opencode.json`.
-
 When writing the objective, include the scope, non-goals, and verification path when they matter. The agent is reminded to audit real files, command output, tests, or PR state before closing the goal.
 
 The `update_goal` tool can close a goal in two ways:
 
 - `status: "complete"` with `evidence` when every requirement is actually achieved.
 - `status: "unmet"` with `blocker` when the objective cannot be achieved or is blocked by missing external input.
-
-Budget exhaustion does not close a goal by itself. It only marks the goal `budgetLimited` and asks the agent to wrap up with remaining work or blockers.
 
 ## State
 
