@@ -6,7 +6,7 @@ This plugin adds:
 
 - `/goal <objective>` as an OpenCode command for TUI, desktop, and web.
 - A sidebar goal indicator with status, elapsed time, and objective.
-- Agent tools: `get_goal`, `create_goal`, `update_goal`, and `clear_goal`.
+- Agent tools: `get_goal`, `create_goal`, `set_goal`, `update_goal`, and `clear_goal`.
 - Goal close evidence: `complete` requires verified evidence, and `unmet` requires a concrete blocker.
 - Persistent per-session goal state.
 - Optional automatic continuation on `session.idle`.
@@ -84,6 +84,8 @@ Use `/goal <objective>` in a fresh OpenCode chat to create a long-running goal:
 ```
 
 Bare `/goal` reports the current goal state. `/goal clear` clears the goal. The TUI also includes a `Goal` command-palette entry for viewing, refreshing, or clearing the current goal state without creating a new goal.
+
+You can also ask the agent to formulate the objective and call `set_goal` itself, for example: "set your own goal to finish this refactor safely." The tool uses the agent-written objective but still only creates a goal when explicitly requested.
 
 When writing the objective, include the scope, non-goals, and verification path when they matter. The agent is reminded to audit real files, command output, tests, or PR state before closing the goal.
 

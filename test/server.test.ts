@@ -39,7 +39,7 @@ test("server plugin exposes Codex-style goal tools", async () => {
   const tools = hooks.tool
   if (!tools) throw new Error("expected goal tools to be registered")
 
-  expect(Object.keys(tools).sort()).toEqual(["clear_goal", "create_goal", "get_goal", "update_goal"])
+  expect(Object.keys(tools).sort()).toEqual(["clear_goal", "create_goal", "get_goal", "set_goal", "update_goal"])
 
   const context = { sessionID: "ses_1" } as never
   const created = await requireTool(tools.create_goal, "create_goal").execute({ objective: "finish" }, context)
@@ -56,6 +56,29 @@ test("server plugin exposes Codex-style goal tools", async () => {
   expect(String(completed)).toContain('"completion_report"')
   expect(String(completed)).toContain('"completionEvidence": "verified locally"')
   expect(calls).toHaveLength(0)
+})
+
+test("set goal lets the agent formulate the goal objective", async () => {
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async () => {},
+        },
+      },
+    } as never,
+    { auto_continue: false },
+  )
+  const tools = hooks.tool
+  if (!tools) throw new Error("expected goal tools to be registered")
+
+  const created = await requireTool(tools.set_goal, "set_goal").execute(
+    { objective: "audit the repo, identify gaps, implement the smallest safe improvement, and verify it" },
+    { sessionID: "ses_1" } as never,
+  )
+
+  expect(String(created)).toContain('"status": "active"')
+  expect(String(created)).toContain("audit the repo")
 })
 
 test("server plugin registers goal as a desktop/web command by default", async () => {

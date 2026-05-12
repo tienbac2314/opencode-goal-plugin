@@ -165,6 +165,18 @@ const server: Plugin = async ({ client }, options?: Options) => {
           return JSON.stringify({ goal }, null, 2)
         },
       },
+      set_goal: {
+        description:
+          "Set a new goal when the user explicitly asks the agent to formulate and set its own goal. The model should write the objective itself based on the user's explicit request. Fails if a non-complete goal exists.",
+        args: {
+          objective: z.string().min(1).max(4000).describe("The model-formulated concrete objective to start pursuing."),
+        },
+        async execute(args, context) {
+          const input = args as CreateGoalArgs
+          const goal = await createGoal(context.sessionID, input.objective)
+          return JSON.stringify({ goal }, null, 2)
+        },
+      },
       update_goal: {
         description:
           "Close the existing goal only after an audit against real evidence. Use status complete only when the objective is achieved and no required work remains, and include evidence. Use status unmet only when the objective cannot be achieved or is blocked, and include the blocker. Do not close a goal merely because work is stopping.",
