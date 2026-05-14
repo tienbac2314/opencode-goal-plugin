@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import plugin, { formatDuration, liveTimeUsedSeconds } from "../src/tui.tsx"
+import plugin, { formatDuration, goalStateFromSession, liveTimeUsedSeconds } from "../src/tui.tsx"
 
 function goal(overrides: Partial<Parameters<typeof liveTimeUsedSeconds>[0]> = {}): Parameters<typeof liveTimeUsedSeconds>[0] {
   return {
@@ -79,4 +79,75 @@ test("formats goal durations for display", () => {
   expect(formatDuration(65)).toBe("1:05")
   expect(formatDuration(74305)).toBe("20:38:25")
   expect(formatDuration(-1)).toBe("0:00")
+})
+
+test("keeps the last goal visible when a newer turn has no goal tool output", () => {
+  const snapshot = goal({ sessionID: "cache-session", objective: "cached goal" })
+  const messages = [{ id: "created" }, { id: "new-user-message" }]
+  const partsByMessage = new Map([
+    [
+      "created",
+      [
+        {
+          type: "tool",
+          tool: "create_goal",
+          state: { status: "completed", output: JSON.stringify({ goal: snapshot }) },
+        },
+      ],
+    ],
+    ["new-user-message", [{ type: "text" }]],
+  ])
+  const api = {
+    state: {
+      session: {
+        messages() {
+          return messages
+        },
+      },
+      part(messageID: string) {
+        return partsByMessage.get(messageID) ?? []
+      },
+    },
+  }
+
+  expect(goalStateFromSession(api as never, "cache-session").goal?.objective).toBe("cached goal")
+
+  partsByMessage.set("created", [])
+  expect(goalStateFromSession(api as never, "cache-session").goal?.objective).toBe("cached goal")
+})
+
+test("clears the cached goal after clear_goal completes", () => {
+  const snapshot = goal({ sessionID: "clear-cache-session", objective: "goal to clear" })
+  const messages = [{ id: "created" }]
+  const partsByMessage = new Map([
+    [
+      "created",
+      [
+        {
+          type: "tool",
+          tool: "create_goal",
+          state: { status: "completed", output: JSON.stringify({ goal: snapshot }) },
+        },
+      ],
+    ],
+  ])
+  const api = {
+    state: {
+      session: {
+        messages() {
+          return messages
+        },
+      },
+      part(messageID: string) {
+        return partsByMessage.get(messageID) ?? []
+      },
+    },
+  }
+
+  expect(goalStateFromSession(api as never, "clear-cache-session").goal?.objective).toBe("goal to clear")
+
+  messages.push({ id: "cleared" })
+  partsByMessage.set("cleared", [{ type: "tool", tool: "clear_goal", state: { status: "completed", output: "" } }])
+
+  expect(goalStateFromSession(api as never, "clear-cache-session").goal).toBeNull()
 })

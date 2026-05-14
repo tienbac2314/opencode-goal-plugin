@@ -37,6 +37,8 @@ type GoalSessionState = {
   messageIndex: number
 }
 
+const goalCache = new Map<string, GoalSnapshot>()
+
 function currentSessionID(api: TuiPluginApi) {
   const route = api.route.current
   if (route.name !== "session") return undefined
@@ -175,7 +177,7 @@ function parseGoalToolOutput(part: GoalToolPart): GoalSnapshot | null | undefine
   }
 }
 
-function goalStateFromSession(api: TuiPluginApi, sessionID: string): GoalSessionState {
+export function goalStateFromSession(api: TuiPluginApi, sessionID: string): GoalSessionState {
   const messages = [...api.state.session.messages(sessionID)] as SessionMessage[]
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
@@ -183,10 +185,14 @@ function goalStateFromSession(api: TuiPluginApi, sessionID: string): GoalSession
     const parts = [...api.state.part(message.id)].reverse() as GoalToolPart[]
     for (const part of parts) {
       const goal = parseGoalToolOutput(part)
-      if (goal !== undefined) return { goal, messageIndex }
+      if (goal !== undefined) {
+        if (goal) goalCache.set(sessionID, goal)
+        else goalCache.delete(sessionID)
+        return { goal, messageIndex }
+      }
     }
   }
-  return { goal: null, messageIndex: -1 }
+  return { goal: goalCache.get(sessionID) ?? null, messageIndex: -1 }
 }
 
 function goalFromSession(api: TuiPluginApi, sessionID: string) {
