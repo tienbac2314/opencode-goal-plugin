@@ -8,7 +8,9 @@ import {
   estimateTokensFromText,
   getGoal,
   markGoalUnmet,
+  recordContinuationResult,
   reserveContinuation,
+  setGoalStatus,
 } from "./state"
 import { compactionContext, continuationPrompt, systemReminder } from "./prompts"
 
@@ -16,6 +18,7 @@ type Options = {
   auto_continue?: boolean
   max_auto_turns?: number
   min_continue_interval_seconds?: number
+  max_prompt_failures?: number
   register_command?: boolean
   command_name?: string
 }
@@ -38,7 +41,9 @@ type UpdateGoalArgs =
 
 const DEFAULT_MAX_AUTO_TURNS = 25
 const DEFAULT_CONTINUE_INTERVAL_SECONDS = 3
+const DEFAULT_MAX_PROMPT_FAILURES = 3
 const DEFAULT_COMMAND_NAME = "goal"
+const activeContinuations = new Set<string>()
 
 function goalCommandTemplate(commandName: string) {
   return `OpenCode goal mode command "/${commandName}" was invoked.
@@ -52,7 +57,9 @@ Use the goal tools to handle this command:
 
 - If the arguments are empty, call get_goal and briefly report the current goal state.
 - If the arguments are "status", "show", or "current", call get_goal and briefly report the current goal state.
-- If the arguments are "clear", call clear_goal and report whether a goal was cleared.
+- If the arguments are "clear", "stop", "off", "reset", "none", or "cancel", call clear_goal and report whether a goal was cleared.
+- If the arguments are "pause", pause the current goal by calling update_goal_status with status "paused" and report the result.
+- If the arguments are "resume", resume the current goal by calling update_goal_status with status "active" and continue working toward it.
 - If the arguments start with "complete " or "done ", perform a completion audit against real artifacts and command output. Call update_goal with status "complete" only if the goal is achieved, using concise evidence from the audit.
 - If the arguments start with "unmet ", "blocked ", or "blocker ", call update_goal with status "unmet" only when the goal cannot be achieved or needs external input, using the remaining arguments as the blocker.
 - Otherwise, create a new goal with create_goal. Use the full arguments as the objective.
@@ -132,10 +139,32 @@ async function sendContinuation(client: Parameters<Plugin>[0]["client"], session
   })
 }
 
+function isIdleEvent(event: { type?: string; properties?: Record<string, unknown> }) {
+  if (event.type === "session.idle") return true
+  const status = event.properties?.status
+  return (
+    event.type === "session.status" &&
+    typeof status === "object" &&
+    status !== null &&
+    (status as { type?: unknown }).type === "idle"
+  )
+}
+
+function sessionIDFromEvent(event: { properties?: Record<string, unknown> }) {
+  const direct = event.properties?.sessionID
+  if (typeof direct === "string") return direct
+  const info = event.properties?.info
+  if (typeof info === "object" && info !== null && typeof (info as { sessionID?: unknown }).sessionID === "string") {
+    return (info as { sessionID: string }).sessionID
+  }
+  return undefined
+}
+
 const server: Plugin = async ({ client }, options?: Options) => {
   const autoContinue = options?.auto_continue ?? true
   const maxAutoTurns = options?.max_auto_turns ?? DEFAULT_MAX_AUTO_TURNS
   const minInterval = options?.min_continue_interval_seconds ?? DEFAULT_CONTINUE_INTERVAL_SECONDS
+  const maxPromptFailures = options?.max_prompt_failures ?? DEFAULT_MAX_PROMPT_FAILURES
   const registerCommand = options?.register_command ?? true
   const commandName = commandNameFromOptions(options)
 
@@ -207,6 +236,17 @@ const server: Plugin = async ({ client }, options?: Options) => {
           return JSON.stringify({ goal, unmet_report: report }, null, 2)
         },
       },
+      update_goal_status: {
+        description: "Pause or resume the current OpenCode goal when the user explicitly asks to pause or resume it.",
+        args: {
+          status: z.enum(["active", "paused"]).describe("active resumes a goal; paused pauses it without clearing it."),
+        },
+        async execute(args, context) {
+          const input = args as { status: "active" | "paused" }
+          const goal = await setGoalStatus(context.sessionID, input.status)
+          return JSON.stringify({ goal }, null, 2)
+        },
+      },
       clear_goal: {
         description: "Clear the current OpenCode goal for this session when the user explicitly asks to clear it.",
         args: {},
@@ -233,11 +273,29 @@ const server: Plugin = async ({ client }, options?: Options) => {
       output.context.push(compactionContext(goal))
     },
     async event({ event }) {
-      if (!autoContinue || event.type !== "session.idle") return
-      const sessionID = event.properties.sessionID
-      const goal = await reserveContinuation(sessionID, maxAutoTurns, minInterval)
-      if (!goal) return
-      await sendContinuation(client, sessionID, continuationPrompt(goal))
+      if (!autoContinue || !isIdleEvent(event as never)) return
+      const sessionID = sessionIDFromEvent(event as never)
+      if (!sessionID) return
+      if (activeContinuations.has(sessionID)) return
+      activeContinuations.add(sessionID)
+      try {
+        const goal = await reserveContinuation(sessionID, maxAutoTurns, minInterval)
+        if (!goal) return
+        await sendContinuation(client, sessionID, continuationPrompt(goal))
+        await recordContinuationResult(sessionID, "success", maxPromptFailures)
+      } catch (error) {
+        await recordContinuationResult(sessionID, "failure", maxPromptFailures)
+        await client.app?.log?.({
+          body: {
+            service: "opencode-goal-plugin",
+            level: "error",
+            message: "Auto-continue failed",
+            extra: { error: error instanceof Error ? error.message : String(error) },
+          },
+        })
+      } finally {
+        activeContinuations.delete(sessionID)
+      }
     },
   }
 }

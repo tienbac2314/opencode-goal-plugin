@@ -83,7 +83,8 @@ Server options can be configured in `opencode.json`:
       {
         "auto_continue": true,
         "max_auto_turns": 25,
-        "min_continue_interval_seconds": 3
+        "min_continue_interval_seconds": 3,
+        "max_prompt_failures": 3
       }
     ]
   ]
@@ -95,6 +96,7 @@ Defaults:
 - `auto_continue`: `true`
 - `max_auto_turns`: `25`
 - `min_continue_interval_seconds`: `3`
+- `max_prompt_failures`: `3`
 - `register_command`: `true`
 - `command_name`: `"goal"`
 
@@ -106,7 +108,7 @@ Use `/goal <objective>` in a fresh OpenCode chat to create a long-running goal:
 /goal review the frontend and translate visible English UI text to Spanish
 ```
 
-Bare `/goal` reports the current goal state. `/goal clear` clears the goal. The TUI also includes a `Goal` command-palette entry for viewing, refreshing, or clearing the current goal state without creating a new goal.
+Bare `/goal` reports the current goal state. `/goal pause` pauses the goal without clearing it, and `/goal resume` resumes it. `/goal clear` clears the goal; `/goal stop`, `/goal off`, `/goal reset`, `/goal none`, and `/goal cancel` are clear aliases. The TUI also includes a `Goal` command-palette entry for viewing, refreshing, or clearing the current goal state without creating a new goal.
 
 You can also ask the agent to formulate the objective and call `set_goal` itself, for example: "set your own goal to finish this refactor safely." The tool uses the agent-written objective but still only creates a goal when explicitly requested.
 
@@ -170,4 +172,6 @@ OpenCode plugin modules are target-specific. This package exports separate modul
 }
 ```
 
-Codex goal mode has deeper runtime integration for thread lifecycle control. This plugin implements the same workflow using OpenCode plugin hooks. Token usage is read from OpenCode step-finish usage when available and falls back to message token metadata or text estimation when exact usage is unavailable. Continuation is driven by OpenCode's `session.idle` event.
+Codex goal mode has deeper runtime integration for thread lifecycle control. This plugin implements the same workflow using OpenCode plugin hooks. Token usage is read from OpenCode step-finish usage when available and falls back to message token metadata or text estimation when exact usage is unavailable. Continuation is driven by OpenCode idle events, including `session.idle` and `session.status` idle notifications.
+
+The goal sidebar shows the current status, elapsed time, auto-continue count, latest status message, and objective when a goal is active or paused. Closed goals remain visible briefly through the latest tool state as achieved or unmet.

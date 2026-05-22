@@ -39,7 +39,14 @@ test("server plugin exposes Codex-style goal tools", async () => {
   const tools = hooks.tool
   if (!tools) throw new Error("expected goal tools to be registered")
 
-  expect(Object.keys(tools).sort()).toEqual(["clear_goal", "create_goal", "get_goal", "set_goal", "update_goal"])
+  expect(Object.keys(tools).sort()).toEqual([
+    "clear_goal",
+    "create_goal",
+    "get_goal",
+    "set_goal",
+    "update_goal",
+    "update_goal_status",
+  ])
 
   const context = { sessionID: "ses_1" } as never
   const created = await requireTool(tools.create_goal, "create_goal").execute({ objective: "finish" }, context)
@@ -101,7 +108,34 @@ test("server plugin registers goal as a desktop/web command by default", async (
   expect(config.command?.goal?.description).toBe("Set or view the long-running session goal")
   expect(config.command?.goal?.template).toContain('OpenCode goal mode command "/goal" was invoked')
   expect(config.command?.goal?.template).toContain("$ARGUMENTS")
+  expect(config.command?.goal?.template).toContain('"pause"')
+  expect(config.command?.goal?.template).toContain('"resume"')
   expect(config.command?.goal?.template).not.toContain("token_budget")
+})
+
+test("goal status tool pauses and resumes a goal", async () => {
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async () => {},
+        },
+      },
+    } as never,
+    { auto_continue: false },
+  )
+  const tools = hooks.tool
+  if (!tools) throw new Error("expected goal tools to be registered")
+
+  const context = { sessionID: "ses_1" } as never
+  await requireTool(tools.create_goal, "create_goal").execute({ objective: "finish" }, context)
+  const paused = await requireTool(tools.update_goal_status, "update_goal_status").execute({ status: "paused" }, context)
+  expect(String(paused)).toContain('"status": "paused"')
+  expect(String(paused)).toContain('"lastStatus": "Goal paused."')
+
+  const resumed = await requireTool(tools.update_goal_status, "update_goal_status").execute({ status: "active" }, context)
+  expect(String(resumed)).toContain('"status": "active"')
+  expect(String(resumed)).toContain('"lastStatus": "Goal resumed."')
 })
 
 test("server plugin does not overwrite an existing goal command", async () => {
@@ -258,4 +292,87 @@ test("idle event auto-continues active goals when enabled", async () => {
 
   expect(calls).toHaveLength(1)
   expect(JSON.stringify(calls[0])).toContain("Continue working toward the active session goal")
+})
+
+test("session status idle event auto-continues active goals", async () => {
+  const calls: unknown[] = []
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async (input: unknown) => {
+            calls.push(input)
+          },
+        },
+      },
+    } as never,
+    { auto_continue: true, max_auto_turns: 1, min_continue_interval_seconds: 0 },
+  )
+  const tools = hooks.tool
+  if (!tools) throw new Error("expected goal tools to be registered")
+
+  await requireTool(tools.create_goal, "create_goal").execute({ objective: "keep going" }, { sessionID: "ses_1" } as never)
+  await hooks.event!({ event: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } } as never })
+
+  expect(calls).toHaveLength(1)
+})
+
+test("auto-continue failures pause after configured retry limit", async () => {
+  const logs: unknown[] = []
+  const hooks = await plugin.server(
+    {
+      client: {
+        app: {
+          log: async (input: unknown) => logs.push(input),
+        },
+        session: {
+          promptAsync: async () => {
+            throw new Error("network down")
+          },
+        },
+      },
+    } as never,
+    { auto_continue: true, max_auto_turns: 2, min_continue_interval_seconds: 0, max_prompt_failures: 1 },
+  )
+  const tools = hooks.tool
+  if (!tools) throw new Error("expected goal tools to be registered")
+
+  await requireTool(tools.create_goal, "create_goal").execute({ objective: "keep going" }, { sessionID: "ses_1" } as never)
+  await hooks.event!({ event: { type: "session.idle", properties: { sessionID: "ses_1" } } as never })
+  const read = await requireTool(tools.get_goal, "get_goal").execute({}, { sessionID: "ses_1" } as never)
+
+  expect(String(read)).toContain('"status": "paused"')
+  expect(String(read)).toContain("Auto-continue prompt failed repeatedly")
+  expect(logs).toHaveLength(1)
+})
+
+test("idle handler skips overlapping continuations for the same session", async () => {
+  let release: (() => void) | undefined
+  const calls: unknown[] = []
+  const hooks = await plugin.server(
+    {
+      client: {
+        session: {
+          promptAsync: async (input: unknown) => {
+            calls.push(input)
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+          },
+        },
+      },
+    } as never,
+    { auto_continue: true, max_auto_turns: 5, min_continue_interval_seconds: 0 },
+  )
+  const tools = hooks.tool
+  if (!tools) throw new Error("expected goal tools to be registered")
+
+  await requireTool(tools.create_goal, "create_goal").execute({ objective: "keep going" }, { sessionID: "ses_1" } as never)
+  const first = hooks.event!({ event: { type: "session.idle", properties: { sessionID: "ses_1" } } as never })
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 1))
+  await hooks.event!({ event: { type: "session.idle", properties: { sessionID: "ses_1" } } as never })
+  release?.()
+  await first
+
+  expect(calls).toHaveLength(1)
 })

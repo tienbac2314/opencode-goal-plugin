@@ -14,6 +14,10 @@ type GoalSnapshot = {
   completionEvidence?: string | null
   blocker?: string | null
   closedAt?: number | null
+  continuationFailures: number
+  lastStatus: string | null
+  autoTurns: number
+  lastContinuationAt: number | null
   remainingTokens: number | null
   sampledAt?: number
 }
@@ -155,6 +159,10 @@ function isGoalSnapshot(value: unknown): value is GoalSnapshot {
   if (value.completionEvidence != null && typeof value.completionEvidence !== "string") return false
   if (value.blocker != null && typeof value.blocker !== "string") return false
   if (value.closedAt != null && typeof value.closedAt !== "number") return false
+  if (typeof value.continuationFailures !== "number") return false
+  if (value.lastStatus != null && typeof value.lastStatus !== "string") return false
+  if (typeof value.autoTurns !== "number") return false
+  if (value.lastContinuationAt != null && typeof value.lastContinuationAt !== "number") return false
   if (value.remainingTokens !== null && typeof value.remainingTokens !== "number") return false
   if (value.sampledAt != null && typeof value.sampledAt !== "number") return false
   return true
@@ -162,7 +170,7 @@ function isGoalSnapshot(value: unknown): value is GoalSnapshot {
 
 function parseGoalToolOutput(part: GoalToolPart): GoalSnapshot | null | undefined {
   if (part.type !== "tool") return undefined
-  if (!["get_goal", "create_goal", "update_goal", "clear_goal"].includes(part.tool ?? "")) return undefined
+  if (!["get_goal", "create_goal", "update_goal", "update_goal_status", "clear_goal"].includes(part.tool ?? "")) return undefined
   if (part.state?.status !== "completed") return undefined
   if (part.tool === "clear_goal") return null
   if (typeof part.state.output !== "string") return undefined
@@ -209,7 +217,9 @@ function formatGoal(goal: GoalSnapshot | null) {
     `Objective: ${goal.objective}`,
     `Status: ${visibleStatus(goal.status)}`,
     `Time used: ${formatDuration(goal.timeUsedSeconds)}`,
+    `Auto-continues: ${goal.autoTurns}`,
   ]
+  if (goal.lastStatus) lines.push(`Last status: ${goal.lastStatus}`)
   if (goal.completionEvidence) lines.push(`Completion evidence: ${goal.completionEvidence}`)
   if (goal.blocker) lines.push(`Blocker: ${goal.blocker}`)
   return lines.join("\n")
@@ -243,6 +253,10 @@ function GoalSidebar(props: { api: TuiPluginApi; sessionID: string }) {
               </text>
               <text fg={theme().textMuted}>Status: {visibleStatus(value().status)}</text>
               <text fg={theme().textMuted}>Time: {formatDuration(elapsed())}</text>
+              <text fg={theme().textMuted}>Auto-continues: {value().autoTurns}</text>
+              <Show when={value().lastStatus}>
+                {(status: () => string) => <text fg={theme().textMuted}>{status()}</text>}
+              </Show>
               <text fg={theme().textMuted}>{objective()}</text>
             </box>
           }

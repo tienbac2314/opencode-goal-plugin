@@ -22,6 +22,8 @@ export type Goal = {
   lastAccountedAt: number | null
   autoTurns: number
   lastContinuationAt: number | null
+  continuationFailures: number
+  lastStatus: string | null
 }
 
 type State = {
@@ -58,6 +60,8 @@ const GoalSchema = Schema.Struct({
   lastAccountedAt: NullableNumber,
   autoTurns: Schema.Number,
   lastContinuationAt: NullableNumber,
+  continuationFailures: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  lastStatus: Schema.optionalWith(NullableString, { default: () => null }),
 })
 const StateSchema = Schema.Struct({
   version: Schema.Literal(1),
@@ -67,6 +71,8 @@ const StateSchema = Schema.Struct({
 export type GoalSnapshot = Omit<Goal, "lastAccountedAt" | "autoTurns" | "lastContinuationAt"> & {
   remainingTokens: number | null
   sampledAt: number
+  autoTurns: number
+  lastContinuationAt: number | null
 }
 
 function defaultStateFile() {
@@ -215,6 +221,10 @@ export function snapshot(goal: Goal): GoalSnapshot {
     completionEvidence: goal.completionEvidence ?? null,
     blocker: goal.blocker ?? null,
     closedAt: goal.closedAt ?? null,
+    continuationFailures: goal.continuationFailures,
+    lastStatus: goal.lastStatus,
+    autoTurns: goal.autoTurns,
+    lastContinuationAt: goal.lastContinuationAt,
     remainingTokens: null,
     sampledAt,
   }
@@ -255,6 +265,8 @@ export async function createGoal(sessionID: string, objective: string, _tokenBud
       lastAccountedAt: now,
       autoTurns: 0,
       lastContinuationAt: null,
+      continuationFailures: 0,
+      lastStatus: "Goal set.",
     }
     state.goals[sessionID] = goal
     return snapshot(goal)
@@ -269,6 +281,8 @@ export async function setGoalStatus(sessionID: string, status: MutableGoalStatus
     goal.status = status
     goal.updatedAt = nowSeconds()
     goal.lastAccountedAt = status === "active" ? goal.updatedAt : null
+    goal.continuationFailures = status === "active" ? 0 : goal.continuationFailures
+    goal.lastStatus = status === "active" ? "Goal resumed." : "Goal paused."
     return snapshot(goal)
   })
 }
@@ -354,7 +368,32 @@ export async function reserveContinuation(sessionID: string, maxAutoTurns: numbe
     accountWallClock(goal, now)
     goal.autoTurns += 1
     goal.lastContinuationAt = now
+    goal.lastStatus = `Auto-continue ${goal.autoTurns} reserved.`
     goal.updatedAt = now
+    return snapshot(goal)
+  })
+}
+
+export async function recordContinuationResult(sessionID: string, result: "success" | "failure", maxFailures: number) {
+  return mutate((state) => {
+    const goal = state.goals[sessionID]
+    if (!goal || goal.status !== "active") return goal ? snapshot(goal) : null
+    const now = nowSeconds()
+    goal.updatedAt = now
+    if (result === "success") {
+      goal.continuationFailures = 0
+      goal.lastStatus = "Auto-continue prompt sent."
+      return snapshot(goal)
+    }
+    goal.continuationFailures += 1
+    goal.lastStatus = `Auto-continue failed ${goal.continuationFailures} time(s).`
+    if (goal.continuationFailures >= maxFailures) {
+      accountWallClock(goal, now)
+      goal.status = "paused"
+      goal.lastAccountedAt = null
+      goal.lastStatus = `Paused after ${goal.continuationFailures} auto-continue failure(s).`
+      goal.blocker = "Auto-continue prompt failed repeatedly. Resume the goal to retry."
+    }
     return snapshot(goal)
   })
 }
@@ -379,7 +418,9 @@ export function formatGoal(goal: GoalSnapshot | null) {
     `Objective: ${goal.objective}`,
     `Status: ${goal.status}`,
     `Time used: ${goal.timeUsedSeconds}s`,
+    `Auto-continues: ${goal.autoTurns}`,
   ]
+  if (goal.lastStatus) lines.push(`Last status: ${goal.lastStatus}`)
   if (goal.completionEvidence) lines.push(`Completion evidence: ${goal.completionEvidence}`)
   if (goal.blocker) lines.push(`Blocker: ${goal.blocker}`)
   return lines.join("\n")

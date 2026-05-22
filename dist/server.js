@@ -32,7 +32,9 @@ var GoalSchema = Schema.Struct({
   closedAt: Schema.optionalWith(NullableNumber, { default: () => null }),
   lastAccountedAt: NullableNumber,
   autoTurns: Schema.Number,
-  lastContinuationAt: NullableNumber
+  lastContinuationAt: NullableNumber,
+  continuationFailures: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  lastStatus: Schema.optionalWith(NullableString, { default: () => null })
 });
 var StateSchema = Schema.Struct({
   version: Schema.Literal(1),
@@ -145,6 +147,10 @@ function snapshot(goal) {
     completionEvidence: goal.completionEvidence ?? null,
     blocker: goal.blocker ?? null,
     closedAt: goal.closedAt ?? null,
+    continuationFailures: goal.continuationFailures,
+    lastStatus: goal.lastStatus,
+    autoTurns: goal.autoTurns,
+    lastContinuationAt: goal.lastContinuationAt,
     remainingTokens: null,
     sampledAt
   };
@@ -176,9 +182,25 @@ async function createGoal(sessionID, objective, _tokenBudget) {
       closedAt: null,
       lastAccountedAt: now,
       autoTurns: 0,
-      lastContinuationAt: null
+      lastContinuationAt: null,
+      continuationFailures: 0,
+      lastStatus: "Goal set."
     };
     state.goals[sessionID] = goal;
+    return snapshot(goal);
+  });
+}
+async function setGoalStatus(sessionID, status) {
+  return mutate((state) => {
+    const goal = state.goals[sessionID];
+    if (!goal)
+      throw new Error("cannot update goal because this session has no goal");
+    accountWallClock(goal);
+    goal.status = status;
+    goal.updatedAt = nowSeconds();
+    goal.lastAccountedAt = status === "active" ? goal.updatedAt : null;
+    goal.continuationFailures = status === "active" ? 0 : goal.continuationFailures;
+    goal.lastStatus = status === "active" ? "Goal resumed." : "Goal paused.";
     return snapshot(goal);
   });
 }
@@ -252,7 +274,32 @@ async function reserveContinuation(sessionID, maxAutoTurns, minIntervalSeconds) 
     accountWallClock(goal, now);
     goal.autoTurns += 1;
     goal.lastContinuationAt = now;
+    goal.lastStatus = `Auto-continue ${goal.autoTurns} reserved.`;
     goal.updatedAt = now;
+    return snapshot(goal);
+  });
+}
+async function recordContinuationResult(sessionID, result, maxFailures) {
+  return mutate((state) => {
+    const goal = state.goals[sessionID];
+    if (!goal || goal.status !== "active")
+      return goal ? snapshot(goal) : null;
+    const now = nowSeconds();
+    goal.updatedAt = now;
+    if (result === "success") {
+      goal.continuationFailures = 0;
+      goal.lastStatus = "Auto-continue prompt sent.";
+      return snapshot(goal);
+    }
+    goal.continuationFailures += 1;
+    goal.lastStatus = `Auto-continue failed ${goal.continuationFailures} time(s).`;
+    if (goal.continuationFailures >= maxFailures) {
+      accountWallClock(goal, now);
+      goal.status = "paused";
+      goal.lastAccountedAt = null;
+      goal.lastStatus = `Paused after ${goal.continuationFailures} auto-continue failure(s).`;
+      goal.blocker = "Auto-continue prompt failed repeatedly. Resume the goal to retry.";
+    }
     return snapshot(goal);
   });
 }
@@ -275,8 +322,11 @@ function formatGoal(goal) {
   const lines = [
     `Objective: ${goal.objective}`,
     `Status: ${goal.status}`,
-    `Time used: ${goal.timeUsedSeconds}s`
+    `Time used: ${goal.timeUsedSeconds}s`,
+    `Auto-continues: ${goal.autoTurns}`
   ];
+  if (goal.lastStatus)
+    lines.push(`Last status: ${goal.lastStatus}`);
   if (goal.completionEvidence)
     lines.push(`Completion evidence: ${goal.completionEvidence}`);
   if (goal.blocker)
@@ -335,7 +385,9 @@ Preserve the goal objective, status, elapsed time, and any completion evidence o
 // src/server.ts
 var DEFAULT_MAX_AUTO_TURNS = 25;
 var DEFAULT_CONTINUE_INTERVAL_SECONDS = 3;
+var DEFAULT_MAX_PROMPT_FAILURES = 3;
 var DEFAULT_COMMAND_NAME = "goal";
+var activeContinuations = new Set;
 function goalCommandTemplate(commandName) {
   return `OpenCode goal mode command "/${commandName}" was invoked.
 
@@ -348,7 +400,9 @@ Use the goal tools to handle this command:
 
 - If the arguments are empty, call get_goal and briefly report the current goal state.
 - If the arguments are "status", "show", or "current", call get_goal and briefly report the current goal state.
-- If the arguments are "clear", call clear_goal and report whether a goal was cleared.
+- If the arguments are "clear", "stop", "off", "reset", "none", or "cancel", call clear_goal and report whether a goal was cleared.
+- If the arguments are "pause", pause the current goal by calling update_goal_status with status "paused" and report the result.
+- If the arguments are "resume", resume the current goal by calling update_goal_status with status "active" and continue working toward it.
 - If the arguments start with "complete " or "done ", perform a completion audit against real artifacts and command output. Call update_goal with status "complete" only if the goal is achieved, using concise evidence from the audit.
 - If the arguments start with "unmet ", "blocked ", or "blocker ", call update_goal with status "unmet" only when the goal cannot be achieved or needs external input, using the remaining arguments as the blocker.
 - Otherwise, create a new goal with create_goal. Use the full arguments as the objective.
@@ -426,10 +480,27 @@ async function sendContinuation(client, sessionID, prompt) {
     }
   });
 }
+function isIdleEvent(event) {
+  if (event.type === "session.idle")
+    return true;
+  const status = event.properties?.status;
+  return event.type === "session.status" && typeof status === "object" && status !== null && status.type === "idle";
+}
+function sessionIDFromEvent(event) {
+  const direct = event.properties?.sessionID;
+  if (typeof direct === "string")
+    return direct;
+  const info = event.properties?.info;
+  if (typeof info === "object" && info !== null && typeof info.sessionID === "string") {
+    return info.sessionID;
+  }
+  return;
+}
 var server = async ({ client }, options) => {
   const autoContinue = options?.auto_continue ?? true;
   const maxAutoTurns = options?.max_auto_turns ?? DEFAULT_MAX_AUTO_TURNS;
   const minInterval = options?.min_continue_interval_seconds ?? DEFAULT_CONTINUE_INTERVAL_SECONDS;
+  const maxPromptFailures = options?.max_prompt_failures ?? DEFAULT_MAX_PROMPT_FAILURES;
   const registerCommand = options?.register_command ?? true;
   const commandName = commandNameFromOptions(options);
   return {
@@ -487,6 +558,17 @@ var server = async ({ client }, options) => {
           return JSON.stringify({ goal, unmet_report: report }, null, 2);
         }
       },
+      update_goal_status: {
+        description: "Pause or resume the current OpenCode goal when the user explicitly asks to pause or resume it.",
+        args: {
+          status: z.enum(["active", "paused"]).describe("active resumes a goal; paused pauses it without clearing it.")
+        },
+        async execute(args, context) {
+          const input = args;
+          const goal = await setGoalStatus(context.sessionID, input.status);
+          return JSON.stringify({ goal }, null, 2);
+        }
+      },
       clear_goal: {
         description: "Clear the current OpenCode goal for this session when the user explicitly asks to clear it.",
         args: {},
@@ -513,13 +595,33 @@ var server = async ({ client }, options) => {
       output.context.push(compactionContext(goal));
     },
     async event({ event }) {
-      if (!autoContinue || event.type !== "session.idle")
+      if (!autoContinue || !isIdleEvent(event))
         return;
-      const sessionID = event.properties.sessionID;
-      const goal = await reserveContinuation(sessionID, maxAutoTurns, minInterval);
-      if (!goal)
+      const sessionID = sessionIDFromEvent(event);
+      if (!sessionID)
         return;
-      await sendContinuation(client, sessionID, continuationPrompt(goal));
+      if (activeContinuations.has(sessionID))
+        return;
+      activeContinuations.add(sessionID);
+      try {
+        const goal = await reserveContinuation(sessionID, maxAutoTurns, minInterval);
+        if (!goal)
+          return;
+        await sendContinuation(client, sessionID, continuationPrompt(goal));
+        await recordContinuationResult(sessionID, "success", maxPromptFailures);
+      } catch (error) {
+        await recordContinuationResult(sessionID, "failure", maxPromptFailures);
+        await client.app?.log?.({
+          body: {
+            service: "opencode-goal-plugin",
+            level: "error",
+            message: "Auto-continue failed",
+            extra: { error: error instanceof Error ? error.message : String(error) }
+          }
+        });
+      } finally {
+        activeContinuations.delete(sessionID);
+      }
     }
   };
 };

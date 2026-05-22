@@ -14,6 +14,10 @@ function goal(overrides: Partial<Parameters<typeof liveTimeUsedSeconds>[0]> = {}
     completionEvidence: null,
     blocker: null,
     closedAt: null,
+    continuationFailures: 0,
+    lastStatus: "Goal set.",
+    autoTurns: 0,
+    lastContinuationAt: null,
     remainingTokens: null,
     sampledAt: 100,
     ...overrides,
@@ -65,6 +69,31 @@ test("tui plugin registers goal sidebar and status command without hijacking /go
   expect(commands.map((command) => command.value).sort()).toEqual(["goal.show"])
   expect(commands.flatMap((command) => (command.slash ? [command.slash.name] : [])).sort()).toEqual([])
   expect(typeof sidebar?.({}, { session_id: "session" })).not.toBe("string")
+})
+
+test("reads goal state from pause and resume tool output", () => {
+  const snapshot = goal({ status: "paused", objective: "paused goal", lastStatus: "Goal paused." })
+  const api = {
+    state: {
+      session: {
+        messages() {
+          return [{ id: "paused" }]
+        },
+      },
+      part() {
+        return [
+          {
+            type: "tool",
+            tool: "update_goal_status",
+            state: { status: "completed", output: JSON.stringify({ goal: snapshot }) },
+          },
+        ]
+      },
+    },
+  }
+
+  expect(goalStateFromSession(api as never, "session").goal?.status).toBe("paused")
+  expect(goalStateFromSession(api as never, "session").goal?.lastStatus).toBe("Goal paused.")
 })
 
 test("live goal time advances from the authoritative snapshot sample time", () => {
