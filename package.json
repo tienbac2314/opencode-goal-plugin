@@ -1,11 +1,19 @@
 {
   "name": "@prevalentware/opencode-goal-plugin",
   "version": "0.1.1",
-  "description": "Codex-style long-running goal mode for OpenCode.",
+  "description": "OpenCode goal plugin that adds Codex-style long-running goal mode, /goal commands, persistence, and TUI status for AI coding agents.",
   "keywords": [
     "opencode",
     "opencode-plugin",
+    "opencode goal plugin",
+    "opencode goal mode",
+    "opencode ai",
     "goal",
+    "goal-mode",
+    "slash-command",
+    "coding-agent",
+    "ai-agent",
+    "developer-tools",
     "agent",
     "tui"
   ],

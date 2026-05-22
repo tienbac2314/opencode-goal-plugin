@@ -1,8 +1,20 @@
 # OpenCode Goal Plugin
 
-Codex-style long-running goal mode for OpenCode.
+[![npm version](https://img.shields.io/npm/v/@prevalentware/opencode-goal-plugin.svg)](https://www.npmjs.com/package/@prevalentware/opencode-goal-plugin)
+[![GitHub repository](https://img.shields.io/badge/GitHub-prevalentWare%2Fopencode--goal--plugin-blue?logo=github)](https://github.com/prevalentWare/opencode-goal-plugin)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-This plugin adds:
+OpenCode Goal Plugin adds Codex-style long-running goal mode to OpenCode. It gives AI coding agents a `/goal` slash command, persistent goal state, completion evidence, idle continuation, and a terminal UI goal indicator so an OpenCode session can keep working toward one explicit objective until it is complete, blocked, or cleared.
+
+If you are searching for an OpenCode goal plugin, goal mode for OpenCode, or a way to keep an OpenCode AI coding agent focused on a long-running task, this package is the npm plugin for that workflow.
+
+Links:
+
+- npm package: [`@prevalentware/opencode-goal-plugin`](https://www.npmjs.com/package/@prevalentware/opencode-goal-plugin)
+- GitHub repository: [`prevalentWare/opencode-goal-plugin`](https://github.com/prevalentWare/opencode-goal-plugin)
+- OpenCode plugin command: `opencode plugin @prevalentware/opencode-goal-plugin`
+
+The OpenCode Goal Plugin adds:
 
 - `/goal <objective>` as an OpenCode command for TUI, desktop, and web.
 - A sidebar goal indicator with status, elapsed time, and objective.
@@ -11,6 +23,17 @@ This plugin adds:
 - Persistent per-session goal state.
 - Optional automatic continuation on `session.idle`.
 - Compaction context so active goals are preserved when OpenCode summarizes a long session.
+
+## Why Use This OpenCode Goal Plugin?
+
+Use this plugin when you want OpenCode to behave more like a goal-driven coding agent instead of a one-prompt assistant. A goal stays visible, survives session compaction, can continue automatically when the session becomes idle, and can only be closed with explicit evidence or a concrete blocker.
+
+Common use cases:
+
+- Keep an OpenCode agent focused during long refactors, migrations, reviews, or test-fixing sessions.
+- Track one explicit objective across TUI, desktop, and web OpenCode surfaces.
+- Require completion evidence before a goal is marked done.
+- Preserve the current goal when OpenCode summarizes or compacts a long conversation.
 
 ## Install
 
