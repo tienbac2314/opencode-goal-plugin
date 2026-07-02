@@ -157,6 +157,33 @@ test("keeps the last goal visible when a newer turn has no goal tool output", ()
   expect(goalStateFromSession(api as never, "cache-session").goal?.objective).toBe("cached goal")
 })
 
+test("restores the goal indicator from persistent tui cache when message history is gone", () => {
+  const snapshot = goal({ sessionID: "kv-cache-session", objective: "persisted goal" })
+  const kv = new Map<string, unknown>([["goal-mode.snapshot.kv-cache-session", snapshot]])
+  const api = {
+    kv: {
+      get(key: string, fallback?: unknown) {
+        return kv.has(key) ? kv.get(key) : fallback
+      },
+      set(key: string, value: unknown) {
+        kv.set(key, value)
+      },
+    },
+    state: {
+      session: {
+        messages() {
+          return []
+        },
+      },
+      part() {
+        return []
+      },
+    },
+  }
+
+  expect(goalStateFromSession(api as never, "kv-cache-session").goal?.objective).toBe("persisted goal")
+})
+
 test("clears the cached goal after clear_goal completes", () => {
   const snapshot = goal({ sessionID: "clear-cache-session", objective: "goal to clear" })
   const messages = [{ id: "created" }]
