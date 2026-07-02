@@ -10,8 +10,11 @@ import {
   recordAssistantProgress,
   getGoal,
   markGoalUnmet,
+  pauseGoalForPlanMode,
+  recordPromptAgent,
   reserveContinuation,
   setGoalStatus,
+  updateGoalObjective,
 } from "../src/state"
 
 let dir = ""
@@ -96,6 +99,50 @@ test("records assistant checkpoints and pauses after repeated no-progress turns"
   expect(paused?.history.some((entry) => entry.type === "checkpoint")).toBe(true)
 })
 
+test("creates a paused planning goal and records the prompting agent", async () => {
+  const created = await createGoal("ses_1", "implement the feature", { agent: "plan", initialStatus: "paused" })
+
+  expect(created.status).toBe("paused")
+  expect(created.lastPromptAgent).toBe("plan")
+  expect(created.stopReason).toBe("plan mode")
+  expect(created.blocker).toContain("Build mode")
+  expect(created.history.some((entry) => entry.type === "paused")).toBe(true)
+
+  const resumed = await setGoalStatus("ses_1", "active", "build")
+  expect(resumed.status).toBe("active")
+  expect(resumed.stopReason).toBeNull()
+  expect(resumed.lastPromptAgent).toBe("build")
+})
+
+test("plan-mode pause via objective update keeps the plan-mode reason", async () => {
+  await createGoal("ses_1", "implement the feature", { agent: "plan", initialStatus: "paused" })
+  const updated = await updateGoalObjective("ses_1", "implement the feature safely", "paused", {
+    agent: "plan",
+    planModePause: true,
+  })
+
+  expect(updated.status).toBe("paused")
+  expect(updated.stopReason).toBe("plan mode")
+  expect(updated.blocker).toContain("Build mode")
+  expect(updated.lastPromptAgent).toBe("plan")
+})
+
+test("records the last prompting agent and pauses active goals for plan mode", async () => {
+  const created = await createGoal("ses_1", "keep going", { agent: "build" })
+  expect(created.status).toBe("active")
+  expect(created.lastPromptAgent).toBe("build")
+
+  const recorded = await recordPromptAgent("ses_1", "plan")
+  expect(recorded?.lastPromptAgent).toBe("plan")
+
+  const paused = await pauseGoalForPlanMode("ses_1")
+  expect(paused?.status).toBe("paused")
+  expect(paused?.stopReason).toBe("plan mode")
+  expect(paused?.blocker).toContain("Build mode")
+
+  expect((await pauseGoalForPlanMode("ses_1"))?.status).toBe("paused")
+})
+
 test("decodes persisted goal state with optional closure fields omitted", async () => {
   await writeFile(
     process.env.OPENCODE_GOAL_STATE_PATH!,
@@ -124,6 +171,7 @@ test("decodes persisted goal state with optional closure fields omitted", async 
   expect(goal?.completionEvidence).toBeNull()
   expect(goal?.blocker).toBeNull()
   expect(goal?.closedAt).toBeNull()
+  expect(goal?.lastPromptAgent).toBeNull()
 })
 
 test("writes state with owner-only file permissions", async () => {
