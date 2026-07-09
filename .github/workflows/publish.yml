@@ -58,7 +58,6 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
       - uses: oven-sh/setup-bun@v2
-      - run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
       - run: bun run ci:version
       - name: Read publish version
