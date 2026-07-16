@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import plugin, { formatDuration, goalStateFromSession, liveTimeUsedSeconds } from "../src/tui.tsx"
+import plugin, { formatDuration, goalStateFromSession, liveTimeUsedSeconds } from "../src/tui.ts"
 
 function goal(overrides: Partial<Parameters<typeof liveTimeUsedSeconds>[0]> = {}): Parameters<typeof liveTimeUsedSeconds>[0] {
   return {

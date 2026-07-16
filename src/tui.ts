@@ -1,6 +1,5 @@
-/** @jsxImportSource @opentui/solid */
 import type { TuiCommand, TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { createMemo, createSignal, onCleanup, Show } from "solid-js"
+import { createElement, insert, setProp } from "@opentui/solid"
 
 type GoalCheckpoint = {
   summary: string
@@ -63,6 +62,7 @@ type GoalSessionState = {
   goal: GoalSnapshot | null
   messageIndex: number
 }
+type ElementChild = string | number | boolean | null | undefined | object
 
 type ModernTuiApi = TuiPluginApi & {
   keymap?: {
@@ -78,9 +78,30 @@ type ModernTuiApi = TuiPluginApi & {
       bindings?: unknown[]
     }) => () => void
   }
+  renderer?: {
+    requestRender?: () => void
+  }
+  lifecycle?: {
+    onDispose?: (cleanup: () => void) => void
+  }
 }
 
 const goalCache = new Map<string, GoalSnapshot>()
+
+function element(tag: string, props: Record<string, unknown>, children: ElementChild[] = []) {
+  const node = createElement(tag)
+  for (const [key, value] of Object.entries(props)) if (value !== undefined) setProp(node, key, value)
+  for (const child of children) if (child !== null && child !== undefined && child !== false) insert(node, child)
+  return node
+}
+
+function text(props: Record<string, unknown>, children: ElementChild[]) {
+  return element("text", props, children)
+}
+
+function box(props: Record<string, unknown>, children: ElementChild[] = []) {
+  return element("box", props, children)
+}
 
 function goalSnapshotKey(sessionID: string) {
   return `goal-mode.snapshot.${sessionID}`
@@ -332,63 +353,26 @@ function formatGoal(goal: GoalSnapshot | null) {
   return lines.join("\n")
 }
 
-function GoalSidebar(props: { api: TuiPluginApi; sessionID: string }) {
-  const theme = () => props.api.theme.current
-  const [nowSeconds, setNowSeconds] = createSignal(currentEpochSeconds())
-  const timer = setInterval(() => setNowSeconds(currentEpochSeconds()), 1000)
-  onCleanup(() => clearInterval(timer))
-  const state = createMemo(() => {
-    props.api.state.session.messages(props.sessionID)
-    return goalStateFromSession(props.api, props.sessionID)
-  })
-  const goal = createMemo(() => state().goal)
-  const elapsed = createMemo(() => {
-    const value = goal()
-    return value ? liveTimeUsedSeconds(value, nowSeconds()) : 0
-  })
-  const objective = createMemo(() => goal()?.objective ?? "")
-
-  return (
-    <Show when={goal()}>
-      {(value: () => GoalSnapshot) => (
-        <Show
-          when={value().status === "complete" || value().status === "unmet"}
-          fallback={
-            <box>
-              <text fg={theme().text}>
-                <b>Goal</b>
-              </text>
-              <text fg={theme().textMuted}>Status: {value().status}</text>
-              <text fg={theme().textMuted}>Time: {formatDuration(elapsed())}</text>
-              <text fg={theme().textMuted}>
-                Tokens: {value().tokensUsed}
-                <Show when={value().tokenBudget}>{(budget: () => number) => <>/{budget()}</>}</Show>
-              </text>
-              <text fg={theme().textMuted}>
-                Auto-continues: {value().autoTurns}
-                <Show when={value().maxAutoTurns}>{(budget: () => number) => <>/{budget()}</>}</Show>
-              </text>
-              <Show when={value().lastCheckpoint}>
-                {(checkpoint: () => GoalCheckpoint) => <text fg={theme().textMuted}>Checkpoint: {checkpoint().summary}</text>}
-              </Show>
-              <Show when={value().stopReason}>
-                {(reason: () => string) => <text fg={theme().textMuted}>Stop: {reason()}</text>}
-              </Show>
-              <Show when={value().lastStatus}>
-                {(status: () => string) => <text fg={theme().textMuted}>{status()}</text>}
-              </Show>
-              <text fg={theme().textMuted}>{objective()}</text>
-            </box>
-          }
-        >
-          <text fg={value().status === "complete" ? theme().primary : theme().textMuted}>
-            <b>{value().status === "complete" ? "Goal achieved" : "Goal unmet"}</b> (
-            {formatDurationBadge(elapsed())})
-          </text>
-        </Show>
-      )}
-    </Show>
-  )
+function GoalSidebar(api: TuiPluginApi, sessionID: string) {
+  const theme = api.theme.current
+  const state = goalStateFromSession(api, sessionID)
+  const goal = state.goal
+  if (!goal) return null
+  const elapsed = liveTimeUsedSeconds(goal)
+  if (goal.status === "complete" || goal.status === "unmet") {
+    return text({ fg: goal.status === "complete" ? theme.primary : theme.textMuted }, [`${goal.status === "complete" ? "Goal achieved" : "Goal unmet"} (${formatDurationBadge(elapsed)})`])
+  }
+  return box({}, [
+    text({ fg: theme.text }, ["Goal"]),
+    text({ fg: theme.textMuted }, [`Status: ${goal.status}`]),
+    text({ fg: theme.textMuted }, [`Time: ${formatDuration(elapsed)}`]),
+    text({ fg: theme.textMuted }, [`Tokens: ${goal.tokensUsed}${goal.tokenBudget == null ? "" : `/${goal.tokenBudget}`}`]),
+    text({ fg: theme.textMuted }, [`Auto-continues: ${goal.autoTurns}${goal.maxAutoTurns == null ? "" : `/${goal.maxAutoTurns}`}`]),
+    ...(goal.lastCheckpoint ? [text({ fg: theme.textMuted }, [`Checkpoint: ${goal.lastCheckpoint.summary}`])] : []),
+    ...(goal.stopReason ? [text({ fg: theme.textMuted }, [`Stop: ${goal.stopReason}`])] : []),
+    ...(goal.lastStatus ? [text({ fg: theme.textMuted }, [goal.lastStatus])] : []),
+    text({ fg: theme.textMuted }, [goal.objective]),
+  ])
 }
 
 function registerGoalCommand(api: TuiPluginApi, command: TuiCommand) {
@@ -413,11 +397,15 @@ function registerGoalCommand(api: TuiPluginApi, command: TuiCommand) {
 }
 
 const tui: TuiPlugin = async (api) => {
+  const modern = api as ModernTuiApi
+  const renderTimer = setInterval(() => modern.renderer?.requestRender?.(), 1000)
+  modern.lifecycle?.onDispose?.(() => clearInterval(renderTimer))
+
   api.slots.register({
     order: 125,
     slots: {
       sidebar_content(_ctx, props) {
-        return <GoalSidebar api={api} sessionID={props.session_id} />
+        return GoalSidebar(api, props.session_id)
       },
     },
   })
