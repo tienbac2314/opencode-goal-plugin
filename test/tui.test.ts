@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test"
+import { expect, setSystemTime, spyOn, test } from "bun:test"
+import { testRender } from "@opentui/solid"
 import plugin, { formatDuration, goalStateFromSession, liveTimeUsedSeconds } from "../src/tui.ts"
 
 function goal(overrides: Partial<Parameters<typeof liveTimeUsedSeconds>[0]> = {}): Parameters<typeof liveTimeUsedSeconds>[0] {
@@ -113,6 +114,89 @@ test("live goal time advances from the authoritative snapshot sample time", () =
   expect(liveTimeUsedSeconds(goal({ status: "paused" }), 130)).toBe(10)
   expect(liveTimeUsedSeconds(goal({ status: "complete" }), 130)).toBe(10)
   expect(liveTimeUsedSeconds(goal({ sampledAt: undefined }), 130)).toBe(10)
+})
+
+test("active goal sidebar advances visible elapsed time after a timer tick", async () => {
+  const intervalCallbacks: (() => void)[] = []
+  const timer = 1 as unknown as ReturnType<typeof setInterval>
+  const setIntervalSpy = spyOn(globalThis, "setInterval").mockImplementation(((callback: unknown, delay?: number) => {
+    if (delay === 1000 && typeof callback === "function") {
+      intervalCallbacks.push(() => callback())
+      return timer
+    }
+    throw new Error(`Unexpected interval delay: ${delay}`)
+  }) as unknown as typeof setInterval)
+  const clearIntervalSpy = spyOn(globalThis, "clearInterval").mockImplementation(() => {})
+  let sidebar: ((ctx: unknown, props: { session_id: string }) => unknown) | undefined
+  const snapshot = goal()
+  const api = {
+    slots: {
+      register(input: { slots: { sidebar_content: (ctx: unknown, props: { session_id: string }) => unknown } }) {
+        sidebar = input.slots.sidebar_content
+        return "slot-id"
+      },
+    },
+    command: {
+      register() {
+        return () => {}
+      },
+    },
+    route: { current: { name: "session", params: { sessionID: "session" } } },
+    ui: {
+      toast() {},
+      dialog: {
+        setSize() {},
+        replace() {},
+        clear() {},
+      },
+    },
+    theme: {
+      current: {
+        text: "#ffffff",
+        textMuted: "#888888",
+        primary: "#00ff00",
+      },
+    },
+    state: {
+      session: {
+        messages() {
+          return [{ id: "active" }]
+        },
+      },
+      part() {
+        return [{ type: "tool", tool: "create_goal", state: { status: "completed", output: JSON.stringify({ goal: snapshot }) } }]
+      },
+    },
+    kv: {
+      get(_key: string, fallback: unknown) {
+        return fallback
+      },
+      set() {},
+    },
+  }
+
+  setSystemTime(new Date(100_000))
+  await plugin.tui(api as never, undefined, undefined as never)
+  const setup = await testRender(() => sidebar?.({}, { session_id: "session" }) as never, { width: 80, height: 20 })
+  let destroyed = false
+  try {
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Time: 0:10")
+
+    setSystemTime(new Date(105_000))
+    for (const callback of intervalCallbacks) callback()
+    await setup.flush()
+
+    expect(setup.captureCharFrame()).toContain("Time: 0:15")
+    setup.renderer.destroy()
+    destroyed = true
+    expect(clearIntervalSpy).toHaveBeenCalledWith(timer)
+  } finally {
+    if (!destroyed) setup.renderer.destroy()
+    clearIntervalSpy.mockRestore()
+    setIntervalSpy.mockRestore()
+    setSystemTime()
+  }
 })
 
 test("formats goal durations for display", () => {

@@ -1,5 +1,6 @@
 import type { TuiCommand, TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import { createElement, insert, setProp } from "@opentui/solid"
+import { createSignal, onCleanup } from "solid-js"
 
 type GoalCheckpoint = {
   summary: string
@@ -62,7 +63,7 @@ type GoalSessionState = {
   goal: GoalSnapshot | null
   messageIndex: number
 }
-type ElementChild = string | number | boolean | null | undefined | object
+type ElementChild = string | number | boolean | null | undefined | object | (() => string)
 
 type ModernTuiApi = TuiPluginApi & {
   keymap?: {
@@ -77,12 +78,6 @@ type ModernTuiApi = TuiPluginApi & {
       }[]
       bindings?: unknown[]
     }) => () => void
-  }
-  renderer?: {
-    requestRender?: () => void
-  }
-  lifecycle?: {
-    onDispose?: (cleanup: () => void) => void
   }
 }
 
@@ -358,14 +353,19 @@ function GoalSidebar(api: TuiPluginApi, sessionID: string) {
   const state = goalStateFromSession(api, sessionID)
   const goal = state.goal
   if (!goal) return null
-  const elapsed = liveTimeUsedSeconds(goal)
   if (goal.status === "complete" || goal.status === "unmet") {
+    const elapsed = liveTimeUsedSeconds(goal)
     return text({ fg: goal.status === "complete" ? theme.primary : theme.textMuted }, [`${goal.status === "complete" ? "Goal achieved" : "Goal unmet"} (${formatDurationBadge(elapsed)})`])
+  }
+  const [nowSeconds, setNowSeconds] = createSignal(currentEpochSeconds())
+  if (goal.status === "active") {
+    const timer = setInterval(() => setNowSeconds(currentEpochSeconds()), 1000)
+    onCleanup(() => clearInterval(timer))
   }
   return box({}, [
     text({ fg: theme.text }, ["Goal"]),
     text({ fg: theme.textMuted }, [`Status: ${goal.status}`]),
-    text({ fg: theme.textMuted }, [`Time: ${formatDuration(elapsed)}`]),
+    text({ fg: theme.textMuted }, [() => `Time: ${formatDuration(liveTimeUsedSeconds(goal, nowSeconds()))}`]),
     text({ fg: theme.textMuted }, [`Tokens: ${goal.tokensUsed}${goal.tokenBudget == null ? "" : `/${goal.tokenBudget}`}`]),
     text({ fg: theme.textMuted }, [`Auto-continues: ${goal.autoTurns}${goal.maxAutoTurns == null ? "" : `/${goal.maxAutoTurns}`}`]),
     ...(goal.lastCheckpoint ? [text({ fg: theme.textMuted }, [`Checkpoint: ${goal.lastCheckpoint.summary}`])] : []),
@@ -397,10 +397,6 @@ function registerGoalCommand(api: TuiPluginApi, command: TuiCommand) {
 }
 
 const tui: TuiPlugin = async (api) => {
-  const modern = api as ModernTuiApi
-  const renderTimer = setInterval(() => modern.renderer?.requestRender?.(), 1000)
-  modern.lifecycle?.onDispose?.(() => clearInterval(renderTimer))
-
   api.slots.register({
     order: 125,
     slots: {
